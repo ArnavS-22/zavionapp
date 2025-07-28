@@ -6,7 +6,7 @@
 class GUMApp {
     constructor() {
         // Use configuration from injected global variable or fallback to default
-        this.apiBaseUrl = window.GUM_CONFIG?.apiBaseUrl || 'http://localhost:8002';
+        this.apiBaseUrl = window.GUM_CONFIG?.apiBaseUrl || 'http://localhost:8001';
         console.log('GUM Frontend initialized with API base URL:', this.apiBaseUrl);
         
         this.connectionStatus = 'connecting';
