@@ -54,6 +54,16 @@
   --error-rgb: 220, 53, 69;
   --brand-cyan-rgb: 8, 145, 178;
   
+  /* Chat Interface Variables */
+  --primary-color: #0891b2;
+  --primary-dark: #0e7490;
+  --primary-rgb: 8, 145, 178;
+  --bg-color: #ffffff;
+  --card-bg: #f8f9fa;
+  --text-color: #212529;
+  --text-muted: #6c757d;
+  --border-color: #dee2e6;
+  
   /* Spacing */
   --spacing-xs: 0.25rem;
   --spacing-sm: 0.5rem;
@@ -92,6 +102,13 @@
   --text-muted: #888888;
   --border-color: #404040;
   --border-light: #363636;
+  
+  /* Chat Interface Dark Mode */
+  --bg-color: #1a1a1a;
+  --card-bg: #2a2a2a;
+  --text-color: #ffffff;
+  --text-muted: #b0b0b0;
+  --border-color: #404040;
 }
 
 /* Reset & Base Styles */

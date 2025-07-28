@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Observational Learning</title>
     <link rel="stylesheet" href="static/css/styles.css?v=2">
+    <link rel="stylesheet" href="static/css/chat.css?v=1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
@@ -60,6 +61,10 @@
                     <button class="tab-button" id="queryTab" data-tab="query" role="tab" aria-selected="false" aria-controls="query-panel">
                         <i class="fas fa-search"></i>
                         <span>Query Insights</span>
+                    </button>
+                    <button class="tab-button" id="chatTab" data-tab="chat" role="tab" aria-selected="false" aria-controls="chat-panel">
+                        <i class="fas fa-comments"></i>
+                        <span>AI Assistant</span>
                     </button>
                 </nav>
             </div>
@@ -408,6 +413,60 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- AI Assistant Chat Tab -->
+            <div class="tab-panel" id="chat-panel" role="tabpanel" aria-labelledby="chatTab">
+                <div class="panel-card">
+                    <div class="card-header">
+                        <h2>
+                            <i class="fas fa-comments"></i>
+                            Zavion AI Assistant
+                        </h2>
+                        <p>Chat with your personal AI assistant that understands your behavior patterns</p>
+                    </div>
+                    
+                    <div class="chat-container">
+                        <div class="chat-header">
+                            <h3>
+                                <i class="fas fa-robot"></i>
+                                Zavion AI
+                            </h3>
+                            <div class="ai-status">
+                                <div class="status-dot"></div>
+                                <span>Online</span>
+                            </div>
+                        </div>
+                        
+                        <div class="chat-messages" id="chatMessages">
+                            <!-- Messages will be dynamically added here -->
+                        </div>
+                        
+                        <div class="chat-input-container">
+                            <div class="chat-input-wrapper">
+                                <textarea 
+                                    id="chatInput" 
+                                    class="chat-input" 
+                                    placeholder="Ask me about your productivity, workflow, or behavior patterns..."
+                                    rows="1"
+                                ></textarea>
+                                <button id="sendChatBtn" class="send-button" type="button">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="chat-suggestions">
+                            <div class="suggestions-title">Quick Questions:</div>
+                            <div class="suggestion-chips">
+                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('When am I most productive?')">When am I most productive?</div>
+                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('What apps do I use most?')">What apps do I use most?</div>
+                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('How can I optimize my workflow?')">How can I optimize my workflow?</div>
+                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('Show me my recent patterns')">Show me my recent patterns</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </section>
     </main>
 
@@ -424,5 +483,6 @@
     </div>
 
     <script src="static/js/app.js?v=2"></script>
+    <script src="static/js/chat.js?v=1"></script>
 </body>
 </html>

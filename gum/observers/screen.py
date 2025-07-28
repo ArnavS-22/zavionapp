@@ -174,7 +174,7 @@ class Screen(Observer):
     """
 
     _CAPTURE_FPS: int = 10
-    _DEBOUNCE_SEC: int = 2
+    _DEBOUNCE_SEC: int = 1  # Reduced from 2 to 1 second for faster response
     _MON_START: int = 1     # first real display in mss
 
     # ─────────────────────────────── construction
@@ -375,89 +375,107 @@ class Screen(Observer):
         # ------------------------------------------------------------------
         # All calls to mss / Quartz are wrapped in `to_thread`
         # ------------------------------------------------------------------
-        with mss.mss() as sct:
-            mons = sct.monitors[self._MON_START:]
+        sct = mss.mss()  # Create mss context in main thread
+        mons = sct.monitors[self._MON_START:]
 
-            # ---- mouse callbacks (pynput is sync → schedule into loop) ----
-            def schedule_event(x: float, y: float, typ: str):
-                asyncio.run_coroutine_threadsafe(mouse_event(x, y, typ), loop)
-
-            listener = mouse.Listener(
-                on_move=lambda x, y: schedule_event(x, y, "move"),
-                on_click=lambda x, y, btn, prs: schedule_event(x, y, "click") if prs else None,
-                on_scroll=lambda x, y, dx, dy: schedule_event(x, y, "scroll"),
+        # ---- mouse event reception ----
+        async def mouse_event(x: float, y: float, typ: str):
+            """Handle mouse events.
+            
+            Args:
+                x (float): X coordinate.
+                y (float): Y coordinate.
+                typ (str): Event type ("move", "click", or "scroll").
+            """
+            idx = self._mon_for(x, y, mons)
+            log.info(
+                f"{typ:<6} @({x:7.1f},{y:7.1f}) → mon={idx}   {'(guarded)' if self._skip() else ''}"
             )
-            listener.start()
+            if self._skip() or idx is None:
+                return
 
-            # ---- nested helper inside the async context ----
-            async def flush():
-                """Process pending event and emit update."""
-                if self._pending_event is None:
-                    return
-                if self._skip():
-                    self._pending_event = None
-                    return
-
-                ev = self._pending_event
-                aft = await asyncio.to_thread(sct.grab, mons[ev["mon"] - 1])
-
-                bef_path = await self._save_frame(ev["before"], "before")
-                aft_path = await self._save_frame(aft, "after")
-                await self._process_and_emit(bef_path, aft_path)
-
-                log.info(f"{ev['type']} captured on monitor {ev['mon']}")
-                self._pending_event = None
-
-            def debounce_flush():
-                """Schedule flush as a task."""
-                asyncio.create_task(flush())
-
-            # ---- mouse event reception ----
-            async def mouse_event(x: float, y: float, typ: str):
-                """Handle mouse events.
-                
-                Args:
-                    x (float): X coordinate.
-                    y (float): Y coordinate.
-                    typ (str): Event type ("move", "click", or "scroll").
-                """
-                idx = self._mon_for(x, y, mons)
-                log.info(
-                    f"{typ:<6} @({x:7.1f},{y:7.1f}) → mon={idx}   {'(guarded)' if self._skip() else ''}"
-                )
-                if self._skip() or idx is None:
-                    return
-
-                # lazily grab before-frame
-                if self._pending_event is None:
+            # lazily grab before-frame
+            if self._pending_event is None:
+                async with self._frame_lock:
+                    bf = self._frames.get(idx)
+                if bf is None:
+                    # Wait a bit for frames to be populated
+                    await asyncio.sleep(0.1)
                     async with self._frame_lock:
                         bf = self._frames.get(idx)
                     if bf is None:
                         return
-                    self._pending_event = {"type": typ, "mon": idx, "before": bf}
+                self._pending_event = {"type": typ, "mon": idx, "before": bf}
 
-                # reset debounce timer
-                if self._debounce_handle:
-                    self._debounce_handle.cancel()
-                self._debounce_handle = loop.call_later(DEBOUNCE, debounce_flush)
-
-            # ---- main capture loop ----
-            log.info(f"Screen observer started — guarding {self._guard or '∅'}")
-
-            while self._running:                         # flag from base class
-                t0 = time.time()
-
-                # refresh 'before' buffers
-                for idx, m in enumerate(mons, 1):
-                    frame = await asyncio.to_thread(sct.grab, m)
-                    async with self._frame_lock:
-                        self._frames[idx] = frame
-
-                # fps throttle
-                dt = time.time() - t0
-                await asyncio.sleep(max(0, (1 / CAP_FPS) - dt))
-
-            # shutdown
-            listener.stop()
+            # reset debounce timer
             if self._debounce_handle:
                 self._debounce_handle.cancel()
+            self._debounce_handle = loop.call_later(DEBOUNCE, debounce_flush)
+
+        # ---- mouse callbacks (pynput is sync → schedule into loop) ----
+        def schedule_event(x: float, y: float, typ: str):
+            asyncio.run_coroutine_threadsafe(mouse_event(x, y, typ), loop)
+
+        listener = mouse.Listener(
+            on_move=lambda x, y: schedule_event(x, y, "move"),
+            on_click=lambda x, y, btn, prs: schedule_event(x, y, "click") if prs else None,
+            on_scroll=lambda x, y, dx, dy: schedule_event(x, y, "scroll"),
+        )
+        listener.start()
+
+        # ---- nested helper inside the async context ----
+        async def flush():
+            """Process pending event and emit update."""
+            if self._pending_event is None:
+                return
+            if self._skip():
+                self._pending_event = None
+                return
+
+            ev = self._pending_event
+            aft = sct.grab(mons[ev["mon"] - 1])  # Use sct directly, not in thread
+
+            bef_path = await self._save_frame(ev["before"], "before")
+            aft_path = await self._save_frame(aft, "after")
+            await self._process_and_emit(bef_path, aft_path)
+
+            log.info(f"{ev['type']} captured on monitor {ev['mon']}")
+            self._pending_event = None
+
+        def debounce_flush():
+            """Schedule flush as a task."""
+            asyncio.run_coroutine_threadsafe(flush(), loop)
+
+        # ---- main capture loop ----
+        log.info(f"Screen observer started — guarding {self._guard or '∅'}")
+        
+        # Add initial frame population
+        for idx, m in enumerate(mons, 1):
+            try:
+                frame = sct.grab(m)  # Use sct directly
+                async with self._frame_lock:
+                    self._frames[idx] = frame
+            except Exception as e:
+                log.error(f"Failed to populate frame for monitor {idx}: {e}")
+
+        while self._running:                         # flag from base class
+            t0 = time.time()
+
+            # refresh 'before' buffers
+            for idx, m in enumerate(mons, 1):
+                try:
+                    frame = sct.grab(m)  # Use sct directly
+                    async with self._frame_lock:
+                        self._frames[idx] = frame
+                except Exception as e:
+                    log.error(f"Failed to refresh frame for monitor {idx}: {e}")
+
+            # fps throttle
+            dt = time.time() - t0
+            await asyncio.sleep(max(0, (1 / CAP_FPS) - dt))
+
+        # shutdown
+        listener.stop()
+        if self._debounce_handle:
+            self._debounce_handle.cancel()
+        sct.close()  # Close mss context

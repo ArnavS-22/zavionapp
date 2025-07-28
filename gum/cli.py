@@ -75,7 +75,11 @@ async def main():
             print("-" * 80)
     else:
         print(f"Listening to {user_name} with model {model}")
-        async with gum(user_name, model, Screen(model)) as gum_instance:
+        # Enable debug logging for screen observer
+        import logging
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s [Screen] %(message)s", datefmt="%H:%M:%S")
+        
+        async with gum(user_name, model, Screen(model, debug=True)) as gum_instance:
             await asyncio.Future()  # run forever (Ctrl-C to stop)
 
 def cli():
