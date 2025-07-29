@@ -25,11 +25,12 @@ from typing import List, Optional, Union
 from asyncio import Semaphore
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel, Field
+from rate_limiter import rate_limiter
 
 from dotenv import load_dotenv
 from gum import gum
@@ -489,6 +490,139 @@ CHUNK_SIZE = 50  # Process frames in chunks for large videos
 ai_semaphore = asyncio.Semaphore(MAX_CONCURRENT_AI_CALLS)
 encoding_semaphore = asyncio.Semaphore(MAX_CONCURRENT_ENCODING)
 gum_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GUM_OPERATIONS)
+
+# Rate limiting configuration
+RATE_LIMITS = {
+    "/observations/video": (5, 300),    # 5 videos per 5 minutes
+    "/observations/text": (20, 60),     # 20 text submissions per minute
+    "/query": (30, 60),                 # 30 queries per minute
+    "default": (100, 60)                # 100 requests per minute for other endpoints
+}
+
+async def check_rate_limit(request: Request):
+    """Check rate limits for the request with enhanced logging and error handling"""
+    path = request.url.path
+    
+    # Get rate limit for this endpoint
+    if path in RATE_LIMITS:
+        max_requests, window = RATE_LIMITS[path]
+    else:
+        max_requests, window = RATE_LIMITS["default"]
+    
+    # Check limit using the enhanced rate limiter
+    if not rate_limiter.check_limit(path, max_requests, window):
+        reset_time = rate_limiter.get_reset_time(path, window)
+        wait_seconds = int(reset_time - time.time())
+        remaining_requests = rate_limiter.get_remaining_requests(path, max_requests)
+        
+        # Log rate limit violation with details
+        logger.warning(f"Rate limit exceeded for {path}: {max_requests} requests per {window}s window. "
+                      f"Reset in {wait_seconds}s. Client IP: {request.client.host if request.client else 'unknown'}")
+        
+        # Get endpoint stats for monitoring
+        stats = rate_limiter.get_endpoint_stats(path)
+        logger.info(f"Rate limit stats for {path}: {stats}")
+        
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Try again in {wait_seconds} seconds.",
+            headers={
+                "Retry-After": str(wait_seconds),
+                "X-RateLimit-Limit": str(max_requests),
+                "X-RateLimit-Remaining": str(remaining_requests),
+                "X-RateLimit-Reset": str(int(reset_time))
+            }
+        )
+    
+    # Log successful request (only for high-traffic endpoints)
+    if path in ["/query", "/observations/text"]:
+        remaining = rate_limiter.get_remaining_requests(path, max_requests)
+        if remaining <= max_requests * 0.2:  # Log when 80% of limit is used
+            logger.info(f"High usage for {path}: {remaining} requests remaining out of {max_requests}")
+
+# Add rate limiting middleware for all endpoints
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Middleware to apply rate limiting to all endpoints"""
+    try:
+        # Skip rate limiting for health check and static files
+        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"] or request.url.path.startswith("/static"):
+            return await call_next(request)
+        
+        # Apply rate limiting
+        await check_rate_limit(request)
+        
+        # Process the request
+        response = await call_next(request)
+        
+        # Add rate limit headers to response
+        path = request.url.path
+        if path in RATE_LIMITS:
+            max_requests, window = RATE_LIMITS[path]
+        else:
+            max_requests, window = RATE_LIMITS["default"]
+        
+        remaining = rate_limiter.get_remaining_requests(path, max_requests)
+        reset_time = rate_limiter.get_reset_time(path, window)
+        
+        response.headers["X-RateLimit-Limit"] = str(max_requests)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        response.headers["X-RateLimit-Reset"] = str(int(reset_time))
+        
+        return response
+        
+    except HTTPException as e:
+        if e.status_code == 429:
+            # Log rate limit violations
+            logger.warning(f"Rate limit violation for {request.url.path}: {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in rate limit middleware: {e}")
+        raise
+
+# Add rate limit monitoring endpoint
+@app.get("/admin/rate-limits", response_model=dict)
+async def get_rate_limit_stats():
+    """Get rate limiting statistics for monitoring"""
+    try:
+        global_stats = rate_limiter.get_global_stats()
+        
+        # Get stats for configured endpoints
+        endpoint_stats = {}
+        for endpoint in RATE_LIMITS.keys():
+            endpoint_stats[endpoint] = rate_limiter.get_endpoint_stats(endpoint)
+        
+        return {
+            "global_stats": global_stats,
+            "endpoint_stats": endpoint_stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting rate limit stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving rate limit statistics"
+        )
+
+# Add rate limit reset endpoint (admin only)
+@app.post("/admin/rate-limits/reset", response_model=dict)
+async def reset_rate_limits(endpoint: Optional[str] = None):
+    """Reset rate limits for specific endpoint or all endpoints"""
+    try:
+        if endpoint:
+            rate_limiter.reset_endpoint(endpoint)
+            logger.info(f"Rate limits reset for endpoint: {endpoint}")
+            return {"message": f"Rate limits reset for {endpoint}", "endpoint": endpoint}
+        else:
+            rate_limiter.reset_all()
+            logger.info("All rate limits reset")
+            return {"message": "All rate limits reset", "endpoint": "all"}
+    except Exception as e:
+        logger.error(f"Error resetting rate limits: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error resetting rate limits"
+        )
 
 # === API Endpoints ===
 
@@ -1725,12 +1859,13 @@ async def process_and_store_in_gum(frame_results: List[dict], user_name: str, ob
 
 @app.post("/observations/video", response_model=dict)
 async def submit_video_observation(
-    file: UploadFile = File(..., description="Video file to analyze"),
-    user_name: Optional[str] = Form(None, description="User name (optional)"),
-    observer_name: Optional[str] = Form("api_controller", description="Observer name"),
-    fps: Optional[float] = Form(0.1, description="Frames per second to extract (default: 0.1)")
+    request: Request,
+    file: UploadFile = File(...),
+    user_name: Optional[str] = Form(None),
+    observer_name: Optional[str] = Form("api_controller"),
+    fps: Optional[float] = Form(0.1)
 ):
-    """Submit a video observation to GUM by extracting and analyzing frames."""
+    """Submit video observation"""
     try:
         start_time = time.time()
         logger.info(f"Received video upload: {file.filename}")

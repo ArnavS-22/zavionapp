@@ -14,13 +14,15 @@ class GUMApp {
         this.currentStep = 1;
         this.selectedFile = null;
         this.toastTimeout = null;
+        this.rateLimitInfo = {}; // Add rate limit tracking
+        this.rateLimitTimers = {}; // Track countdown timers
         
         // Propositions pagination
         this.currentPropositionsPage = 1;
         
         // Tab management
         this.activeTab = 'upload';
-          // Theme management - handle migration from old theme key
+        // Theme management - handle migration from old theme key
         let theme = localStorage.getItem('gum-theme');
         if (!theme) {
             // Default to light theme
@@ -30,6 +32,168 @@ class GUMApp {
         this.theme = theme;
         
         this.init();
+    }
+
+    async apiCall(url, options = {}) {
+        try {
+            const response = await fetch(url, options);
+            
+            if (response.status === 429) {
+                const retryAfter = response.headers.get('Retry-After');
+                const rateLimitLimit = response.headers.get('X-RateLimit-Limit');
+                const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining');
+                const rateLimitReset = response.headers.get('X-RateLimit-Reset');
+                
+                const errorData = await response.json();
+                
+                this.handleRateLimit(url, retryAfter, errorData.detail, {
+                    limit: rateLimitLimit,
+                    remaining: rateLimitRemaining,
+                    reset: rateLimitReset
+                });
+                throw new Error('Rate limited');
+            }
+            
+            // Clear any rate limit info on success
+            delete this.rateLimitInfo[url];
+            this.updateRateLimitUI();
+            
+            return response;
+        } catch (error) {
+            if (error.message !== 'Rate limited') {
+                this.showToast('❌ Connection error. Make sure GUM is running.', 'error');
+            }
+            throw error;
+        }
+    }
+
+    handleRateLimit(endpoint, retryAfter, message, headers = {}) {
+        const waitTime = parseInt(retryAfter) || 60;
+        const resetTime = Date.now() + (waitTime * 1000);
+        
+        this.rateLimitInfo[endpoint] = {
+            resetTime: resetTime,
+            message: message,
+            limit: headers.limit,
+            remaining: headers.remaining,
+            reset: headers.reset
+        };
+        
+        this.showToast(`⏳ ${message}`, 'warning', waitTime * 1000);
+        this.updateRateLimitUI();
+        
+        // Start countdown timer
+        this.startRateLimitCountdown(endpoint, resetTime);
+        
+        // Auto-clear after wait time
+        setTimeout(() => {
+            delete this.rateLimitInfo[endpoint];
+            this.updateRateLimitUI();
+        }, waitTime * 1000);
+    }
+
+    startRateLimitCountdown(endpoint, resetTime) {
+        // Clear existing timer for this endpoint
+        if (this.rateLimitTimers[endpoint]) {
+            clearInterval(this.rateLimitTimers[endpoint]);
+        }
+        
+        // Start new countdown timer
+        this.rateLimitTimers[endpoint] = setInterval(() => {
+            const remainingTime = Math.ceil((resetTime - Date.now()) / 1000);
+            
+            if (remainingTime <= 0) {
+                // Time's up, clear timer and re-enable
+                clearInterval(this.rateLimitTimers[endpoint]);
+                delete this.rateLimitTimers[endpoint];
+                delete this.rateLimitInfo[endpoint];
+                this.updateRateLimitUI();
+                this.showToast('✅ Rate limit reset - you can try again!', 'success');
+            } else {
+                // Update UI with remaining time
+                this.updateRateLimitUI();
+            }
+        }, 1000);
+    }
+
+    updateRateLimitUI() {
+        // Update video upload button
+        this.updateEndpointRateLimitUI('/observations/video', 'uploadBtn', 'Upload Video');
+        
+        // Update text submission button
+        this.updateEndpointRateLimitUI('/observations/text', 'submitTextBtn', 'Submit Text');
+        
+        // Update query button
+        this.updateEndpointRateLimitUI('/query', 'querySearchBtn', 'Search');
+        
+        // Update propositions load button
+        this.updateEndpointRateLimitUI('/propositions', 'loadPropositions', 'Load Insights');
+    }
+
+    updateEndpointRateLimitUI(endpoint, buttonId, defaultText) {
+        const fullEndpoint = `${this.apiBaseUrl}${endpoint}`;
+        const rateLimitInfo = this.rateLimitInfo[fullEndpoint];
+        const button = document.getElementById(buttonId);
+        
+        if (rateLimitInfo && button) {
+            const remainingTime = Math.ceil((rateLimitInfo.resetTime - Date.now()) / 1000);
+            
+            if (remainingTime > 0) {
+                button.disabled = true;
+                button.textContent = `Wait ${remainingTime}s`;
+                button.classList.add('rate-limited');
+                
+                // Add visual indicator
+                this.addRateLimitIndicator(button, remainingTime, rateLimitInfo.limit, rateLimitInfo.remaining);
+            } else {
+                button.disabled = false;
+                button.textContent = defaultText;
+                button.classList.remove('rate-limited');
+                this.removeRateLimitIndicator(button);
+            }
+        } else if (button) {
+            button.disabled = false;
+            button.textContent = defaultText;
+            button.classList.remove('rate-limited');
+            this.removeRateLimitIndicator(button);
+        }
+    }
+
+    addRateLimitIndicator(button, remainingTime, limit, remaining) {
+        // Remove existing indicator
+        this.removeRateLimitIndicator(button);
+        
+        // Create indicator element
+        const indicator = document.createElement('div');
+        indicator.className = 'rate-limit-indicator';
+        indicator.innerHTML = `
+            <div class="rate-limit-progress">
+                <div class="rate-limit-bar" style="width: ${((remaining || 0) / (limit || 1)) * 100}%"></div>
+            </div>
+            <div class="rate-limit-text">
+                ${remaining || 0}/${limit || '∞'} remaining • ${remainingTime}s
+            </div>
+        `;
+        
+        // Insert after button
+        button.parentNode.insertBefore(indicator, button.nextSibling);
+    }
+
+    removeRateLimitIndicator(button) {
+        const indicator = button.parentNode.querySelector('.rate-limit-indicator');
+        if (indicator) {
+            indicator.remove();
+        }
+    }
+
+    getRateLimitStatus(endpoint) {
+        const fullEndpoint = `${this.apiBaseUrl}${endpoint}`;
+        return this.rateLimitInfo[fullEndpoint] || null;
+    }
+
+    isRateLimited(endpoint) {
+        const status = this.getRateLimitStatus(endpoint);
+        return status && status.resetTime > Date.now();
     }
 
     /**
