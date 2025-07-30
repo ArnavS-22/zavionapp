@@ -326,6 +326,338 @@ async def analyze_image_with_ai(base64_image: str, filename: Optional[str] = Non
         return f"Error analyzing image: {str(e)}"
 
 
+async def analyze_batch_with_detailed_insights(frame_batch: List[dict], batch_id: str = "batch", start_time: Optional[str] = None, end_time: Optional[str] = None) -> dict:
+    """Analyze a batch of frames/events with detailed bullet-point insights and precise timestamp correlation.
+    
+    Args:
+        frame_batch (List[dict]): List of frame/event data with timestamps
+        batch_id (str): Identifier for the batch
+        start_time (Optional[str]): Start time of the batch (HH:MM:SS AM/PM format)
+        end_time (Optional[str]): End time of the batch (HH:MM:SS AM/PM format)
+        
+    Returns:
+        dict: Structured analysis with detailed insights
+    """
+    try:
+        logger.info(f"Starting detailed batch analysis for {len(frame_batch)} frames/events (batch: {batch_id})")
+        
+        # Get unified AI client
+        client = await get_ai_client()
+        
+        # Prepare batch data with timestamps
+        frame_info = []
+        event_timeline = []
+        
+        for i, frame_data in enumerate(frame_batch):
+            frame_number = frame_data.get("frame_number", i + 1)
+            timestamp = frame_data.get("timestamp", 0)
+            event_type = frame_data.get("event_type", "screen_capture")
+            
+            # Convert timestamp to readable format
+            if isinstance(timestamp, (int, float)):
+                # Convert seconds to HH:MM:SS format
+                hours = int(timestamp // 3600)
+                minutes = int((timestamp % 3600) // 60)
+                seconds = int(timestamp % 60)
+                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                time_str = str(timestamp)
+            
+            filename = f"frame_{frame_number:03d}.jpg"
+            frame_info.append(f"Frame {frame_number}: {filename} at {time_str}")
+            event_timeline.append(f"{time_str}: {event_type}")
+        
+        # Determine time range
+        if not start_time and frame_batch:
+            first_timestamp = frame_batch[0].get("timestamp", 0)
+            if isinstance(first_timestamp, (int, float)):
+                hours = int(first_timestamp // 3600)
+                minutes = int((first_timestamp % 3600) // 60)
+                seconds = int(first_timestamp % 60)
+                start_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        if not end_time and frame_batch:
+            last_timestamp = frame_batch[-1].get("timestamp", 0)
+            if isinstance(last_timestamp, (int, float)):
+                hours = int(last_timestamp // 3600)
+                minutes = int((last_timestamp % 3600) // 60)
+                seconds = int(last_timestamp % 60)
+                end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        time_range = f"{start_time or '00:00:00'} - {end_time or '00:00:00'}"
+        
+        # Create comprehensive system prompt for detailed analysis
+        frame_list = "\n".join(frame_info)
+        timeline = "\n".join(event_timeline)
+        
+        system_prompt = f"""You are a professional workflow analyst specializing in user behavior and productivity optimization. Analyze this sequence of {len(frame_batch)} screen captures and events to provide detailed insights about the user's workflow, productivity patterns, and behavioral tendencies.
+
+EVENT TIMELINE:
+{timeline}
+
+FRAME SEQUENCE:
+{frame_list}
+
+ANALYSIS REQUIREMENTS:
+You must provide a structured analysis following this EXACT format:
+
+WORKFLOW ANALYSIS ({time_range})
+
+• Specific Problem Moments (exact timestamps)
+HH:MM:SS: [Specific issue or distraction], [duration/impact]
+HH:MM:SS: [Another issue], [resolution time]
+
+• Productivity Patterns
+Peak focus: [time range] ([activity description])
+Distraction trigger: [specific event] at [time]
+Recovery pattern: [time to regain focus]
+
+• Application Usage
+Most used: [App name] ([X.X minutes])
+Context switches: [number] times in [duration]
+Switch cost: Average [X] seconds per switch
+
+• Behavioral Insights
+[Specific observation about user behavior with evidence]
+[Pattern identified with supporting details]
+[Recommendation based on observed data]
+
+ANALYSIS GUIDELINES:
+1. Extract precise timestamps from the event timeline
+2. Identify specific moments of productivity loss or distraction
+3. Analyze application switching patterns and context costs
+4. Look for behavioral patterns that impact workflow efficiency
+5. Provide actionable recommendations based on observed behavior
+6. Use exact HH:MM:SS format for all timestamps
+7. Be specific about durations, frequencies, and impact
+8. Focus on actionable insights that can improve productivity
+
+Provide a comprehensive analysis that helps understand and optimize the user's workflow."""
+        
+        # Process each frame individually but with enhanced context
+        detailed_analyses = []
+        for i, frame_data in enumerate(frame_batch):
+            try:
+                frame_number = frame_data.get("frame_number", i + 1)
+                base64_data = frame_data.get("base64_data", "")
+                timestamp = frame_data.get("timestamp", 0)
+                event_type = frame_data.get("event_type", "screen_capture")
+                
+                # Convert timestamp to readable format
+                if isinstance(timestamp, (int, float)):
+                    hours = int(timestamp // 3600)
+                    minutes = int((timestamp % 3600) // 60)
+                    seconds = int(timestamp % 60)
+                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                else:
+                    time_str = str(timestamp)
+                
+                filename = f"frame_{frame_number:03d}.jpg"
+                
+                # Create frame-specific prompt with enhanced context
+                frame_prompt = f"""This is frame {i + 1} of {len(frame_batch)} in a detailed workflow analysis sequence.
+
+{system_prompt}
+
+CURRENT FRAME CONTEXT:
+- Frame: {filename}
+- Timestamp: {time_str}
+- Event Type: {event_type}
+- Position in sequence: {i + 1}/{len(frame_batch)}
+
+Analyze this specific frame in the context of the overall workflow sequence, focusing on the user's behavior at this exact moment and how it relates to the broader productivity patterns."""
+                
+                # Use the unified client for vision completion
+                analysis = await client.vision_completion(
+                    text_prompt=frame_prompt,
+                    base64_image=base64_data
+                )
+                
+                if analysis:
+                    detailed_analyses.append({
+                        "frame_number": frame_number,
+                        "timestamp": time_str,
+                        "event_type": event_type,
+                        "analysis": analysis,
+                        "base64_data": base64_data,
+                        "batch_processed": True,
+                        "batch_id": batch_id
+                    })
+                else:
+                    detailed_analyses.append({
+                        "frame_number": frame_number,
+                        "timestamp": time_str,
+                        "event_type": event_type,
+                        "analysis": "Error: Empty response from vision model",
+                        "base64_data": base64_data,
+                        "batch_processed": True,
+                        "batch_id": batch_id,
+                        "error": True
+                    })
+                    
+            except Exception as frame_error:
+                logger.error(f"Error processing frame {frame_data.get('frame_number', 'unknown')} in detailed batch: {frame_error}")
+                detailed_analyses.append({
+                    "frame_number": frame_data.get("frame_number", i + 1),
+                    "timestamp": str(frame_data.get("timestamp", 0)),
+                    "event_type": frame_data.get("event_type", "screen_capture"),
+                    "analysis": f"Error analyzing frame in detailed batch: {str(frame_error)}",
+                    "base64_data": frame_data.get("base64_data", ""),
+                    "batch_processed": True,
+                    "batch_id": batch_id,
+                    "error": True
+                })
+        
+        # Create consolidated analysis
+        consolidated_analysis = {
+            "batch_id": batch_id,
+            "time_range": time_range,
+            "frame_count": len(frame_batch),
+            "detailed_analyses": detailed_analyses,
+            "summary": {
+                "start_time": start_time,
+                "end_time": end_time,
+                "total_duration": len(frame_batch),
+                "event_types": list(set(f.get("event_type", "screen_capture") for f in frame_batch))
+            }
+        }
+        
+        logger.info(f"Detailed batch analysis completed for {len(detailed_analyses)} frames")
+        return consolidated_analysis
+        
+    except Exception as e:
+        logger.error(f"Detailed batch analysis failed: {str(e)}")
+        return {
+            "batch_id": batch_id,
+            "time_range": f"{start_time or '00:00:00'} - {end_time or '00:00:00'}",
+            "frame_count": len(frame_batch),
+            "detailed_analyses": [],
+            "error": str(e),
+            "summary": {
+                "start_time": start_time,
+                "end_time": end_time,
+                "total_duration": len(frame_batch),
+                "event_types": []
+            }
+        }
+
+
+async def analyze_frames_batch_with_ai(frame_batch: List[dict], batch_id: str = "batch") -> List[dict]:
+    """Analyze multiple frames in a single AI call for batch processing.
+    
+    Args:
+        frame_batch (List[dict]): List of frame data dictionaries with base64_data and frame_number
+        batch_id (str): Identifier for the batch for logging purposes
+        
+    Returns:
+        List[dict]: List of frame results with analysis
+    """
+    try:
+        logger.info(f"Starting batch analysis for {len(frame_batch)} frames (batch: {batch_id})")
+        
+        # Get unified AI client
+        client = await get_ai_client()
+        
+        # Prepare batch data
+        frame_info = []
+        
+        for frame_data in frame_batch:
+            frame_number = frame_data["frame_number"]
+            filename = f"frame_{frame_number:03d}.jpg"
+            frame_info.append(f"Frame {frame_number}: {filename}")
+        
+        # Create comprehensive prompt for batch analysis
+        frame_list = "\n".join(frame_info)
+        batch_prompt = f"""Analyze this sequence of {len(frame_batch)} video frames and describe what the user is doing, 
+        what applications they're using, and any observable behavior patterns. Focus on:
+        
+        1. What applications or interfaces are visible across the frames
+        2. What actions the user appears to be taking (sequence of activities)
+        3. Any workflow patterns or preferences shown
+        4. The general context and progression of the user's activity
+        5. Changes or transitions between frames
+        
+        Frame sequence:
+        {frame_list}
+        
+        Provide a detailed analysis that covers the entire sequence and helps understand the user's behavior pattern.
+        Consider the temporal progression and any significant changes between frames."""
+        
+        # Process each frame individually but with batch context
+        results = []
+        for i, frame_data in enumerate(frame_batch):
+            try:
+                frame_number = frame_data["frame_number"]
+                base64_data = frame_data["base64_data"]
+                filename = f"frame_{frame_number:03d}.jpg"
+                
+                # Create frame-specific prompt that includes batch context
+                frame_prompt = f"""This is frame {i + 1} of {len(frame_batch)} in a video sequence.
+                
+                {batch_prompt}
+                
+                Current frame: {filename}
+                
+                Analyze this specific frame in the context of the overall sequence."""
+                
+                # Use the unified client for vision completion
+                analysis = await client.vision_completion(
+                    text_prompt=frame_prompt,
+                    base64_image=base64_data
+                )
+                
+                if analysis:
+                    # Create frame-specific analysis by adding frame context
+                    frame_analysis = f"Frame {frame_number} Analysis (Batch {batch_id}):\n{analysis}"
+                    
+                    results.append({
+                        "frame_number": frame_number,
+                        "analysis": frame_analysis,
+                        "base64_data": base64_data,
+                        "batch_processed": True,
+                        "batch_id": batch_id
+                    })
+                else:
+                    # Handle empty response
+                    results.append({
+                        "frame_number": frame_number,
+                        "analysis": "Error: Empty response from vision model",
+                        "base64_data": base64_data,
+                        "batch_processed": True,
+                        "batch_id": batch_id,
+                        "error": True
+                    })
+                    
+            except Exception as frame_error:
+                logger.error(f"Error processing frame {frame_data.get('frame_number', 'unknown')} in batch: {frame_error}")
+                results.append({
+                    "frame_number": frame_data["frame_number"],
+                    "analysis": f"Error analyzing frame in batch: {str(frame_error)}",
+                    "base64_data": frame_data["base64_data"],
+                    "batch_processed": True,
+                    "batch_id": batch_id,
+                    "error": True
+                })
+        
+        logger.info(f"Batch analysis completed for {len(results)} frames")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Batch analysis failed: {str(e)}")
+        # Return error results for all frames
+        return [
+            {
+                "frame_number": frame_data["frame_number"],
+                "analysis": f"Error analyzing frame in batch: {str(e)}",
+                "base64_data": frame_data["base64_data"],
+                "batch_processed": True,
+                "batch_id": batch_id,
+                "error": True
+            }
+            for frame_data in frame_batch
+        ]
+
+
 def validate_video(file_content: bytes) -> bool:
     """Validate that the uploaded file is a valid video."""
     try:
@@ -359,7 +691,7 @@ def validate_video(file_content: bytes) -> bool:
         return False
 
 
-def split_frames(video_path: Path, temp_dir: Path, fps: float = 0.1) -> List[Path]:
+def split_frames(video_path: Path, temp_dir: Path, fps: float = 0.03) -> List[Path]:  # Reduced from 0.1 to 0.03 (70% reduction)
     """Extract frames from video using ffmpeg."""
     try:
         logger.info(f"Starting frame extraction from {video_path.name} at {fps} FPS")
@@ -423,7 +755,7 @@ def encode_image_from_path(image_path: Path) -> str:
         raise
 
 
-async def process_video_frames(video_path: Path, fps: float = 0.1) -> List[dict]:
+async def process_video_frames(video_path: Path, fps: float = 0.03) -> List[dict]:  # Reduced from 0.1 to 0.03 (70% reduction)
     """Process video by extracting frames and analyzing each one."""
     results = []
     
@@ -445,37 +777,44 @@ async def process_video_frames(video_path: Path, fps: float = 0.1) -> List[dict]
         
         logger.info(f"Starting AI analysis of {len(frame_files)} frames")
         
-        # Process each frame
+        # Prepare frames for batch processing
+        frame_data_list = []
         for i, frame_path in enumerate(frame_files):
             try:
-                logger.info(f"Analyzing frame {i+1}/{len(frame_files)}: {frame_path.name}")
+                logger.info(f"Preparing frame {i+1}/{len(frame_files)}: {frame_path.name}")
                 
                 # Encode frame for AI analysis
                 base64_frame = encode_image_from_path(frame_path)
                 
-                # Analyze frame with AI
-                frame_name = f"frame_{i+1:03d}.jpg"
-                analysis = await analyze_image_with_ai(base64_frame, frame_name)
-                
-                results.append({
+                frame_data_list.append({
                     'frame_number': i + 1,
-                    'frame_name': frame_name,
-                    'analysis': analysis,
+                    'base64_data': base64_frame,
+                    'frame_name': f"frame_{i+1:03d}.jpg",
                     'timestamp': i / fps  # Approximate timestamp in seconds
                 })
                 
-                logger.info(f"Frame {i+1}/{len(frame_files)} analyzed successfully")
-                
             except Exception as e:
-                logger.error(f"Error processing frame {i+1}: {str(e)}")
-                # Continue with other frames
-                results.append({
+                logger.error(f"Error preparing frame {i+1}: {str(e)}")
+                # Add error frame data
+                frame_data_list.append({
                     'frame_number': i + 1,
+                    'base64_data': '',
                     'frame_name': f"frame_{i+1:03d}.jpg",
-                    'analysis': f"Error processing frame: {str(e)}",
                     'timestamp': i / fps,
                     'error': True
                 })
+        
+        # Process frames in batches
+        if frame_data_list:
+            logger.info(f"Processing {len(frame_data_list)} frames in batches")
+            results = await process_frames_in_batches(frame_data_list, ai_semaphore, BATCH_SIZE)
+            
+            # Add timestamp information to results
+            for result in results:
+                frame_number = result['frame_number']
+                result['timestamp'] = (frame_number - 1) / fps
+        else:
+            results = []
     
     logger.info(f"Video frame processing completed! Processed {len(results)} frames")
     return results
@@ -485,6 +824,11 @@ MAX_CONCURRENT_AI_CALLS = 5  # Limit concurrent AI analysis calls
 MAX_CONCURRENT_ENCODING = 10  # Limit concurrent base64 encoding operations
 MAX_CONCURRENT_GUM_OPERATIONS = 3  # Limit concurrent GUM database operations
 CHUNK_SIZE = 50  # Process frames in chunks for large videos
+
+# Batch processing configuration for video frames
+BATCH_SIZE = 3  # Number of frames to process per AI call
+BATCH_TIMEOUT = 1.0  # Maximum wait time for batching (seconds)
+MAX_BATCH_SIZE = 5  # Maximum frames per batch to prevent token limits
 
 # Initialize semaphores for controlling concurrency
 ai_semaphore = asyncio.Semaphore(MAX_CONCURRENT_AI_CALLS)
@@ -1136,14 +1480,16 @@ async def get_propositions_count(
 
 
 
-async def generate_video_insights(frame_analyses: List[str], filename: str, user_name: str = None) -> dict:
+async def generate_video_insights(frame_analyses: List[str], filename: str, user_name: str = None, detailed_analysis: dict = None) -> dict:
     """
     Generate structured insights from existing GUM observations and propositions.
+    Enhanced to support detailed bullet-point analysis format.
     
     Args:
         frame_analyses: List of AI analysis texts from processed frames (for context)
         filename: Name of the video file for context
         user_name: User name to query specific data
+        detailed_analysis: Optional detailed analysis result from analyze_batch_with_detailed_insights
         
     Returns:
         Dictionary containing structured insights from existing GUM data:
@@ -1152,7 +1498,8 @@ async def generate_video_insights(frame_analyses: List[str], filename: str, user
             "behavior_patterns": List[str] (from recent propositions), 
             "summary": str,
             "confidence_score": float,
-            "recommendations": List[str]
+            "recommendations": List[str],
+            "detailed_analysis": dict (if provided)
         }
     """
     try:
@@ -1312,7 +1659,8 @@ async def generate_video_insights(frame_analyses: List[str], filename: str, user
             "behavior_patterns": behavior_patterns[:5],  # Limit to 5 patterns
             "summary": summary,
             "confidence_score": confidence_score,
-            "recommendations": recommendations[:4]  # Limit to 4 recommendations
+            "recommendations": recommendations[:4],  # Limit to 4 recommendations
+            "detailed_analysis": detailed_analysis  # Include detailed analysis if provided
         }
         
         logger.info(f"Generated {len(insights['key_insights'])} insights and {len(insights['behavior_patterns'])} patterns from existing GUM data")
@@ -1678,21 +2026,118 @@ def split_frames_smart(video_path: str, output_dir: str, max_frames: int = 10) -
 
 async def encode_frame_to_base64(frame_path: str, frame_number: int) -> dict:
     """
-    Encode a single frame to base64 with semaphore control.
+    Encode a single frame to base64 with semaphore control and timestamp correlation.
     """
     async with encoding_semaphore:
         try:
             with open(frame_path, "rb") as f:
                 base64_data = base64.b64encode(f.read()).decode("utf-8")
             
+            # Add timestamp for correlation with detailed analysis
+            timestamp = time.time()
+            
             return {
                 "frame_number": frame_number,
                 "base64_data": base64_data,
-                "file_path": frame_path
+                "file_path": frame_path,
+                "timestamp": timestamp,
+                "event_type": "video_frame"
             }
         except Exception as e:
             logger.error(f"Error encoding frame {frame_number}: {str(e)}")
             raise
+
+
+async def process_frames_in_batches(frames: List[dict], semaphore: asyncio.Semaphore, batch_size: int = BATCH_SIZE) -> List[dict]:
+    """Process frames in batches for efficient AI analysis.
+    
+    Args:
+        frames (List[dict]): List of frame data dictionaries
+        semaphore (asyncio.Semaphore): Semaphore for controlling concurrency
+        batch_size (int): Number of frames per batch
+        
+    Returns:
+        List[dict]: List of processed frame results
+    """
+    if not frames:
+        return []
+    
+    logger.info(f"Processing {len(frames)} frames in batches of {batch_size}")
+    
+    # Group frames into batches
+    batches = []
+    for i in range(0, len(frames), batch_size):
+        batch = frames[i:i + batch_size]
+        batches.append(batch)
+    
+    logger.info(f"Created {len(batches)} batches for processing")
+    
+    # Process batches with semaphore control
+    async def process_batch(batch: List[dict], batch_index: int) -> List[dict]:
+        async with semaphore:
+            batch_id = f"batch_{batch_index + 1}"
+            
+            # Calculate time range for detailed analysis
+            start_time = None
+            end_time = None
+            if batch:
+                first_timestamp = batch[0].get("timestamp", 0)
+                last_timestamp = batch[-1].get("timestamp", 0)
+                
+                if isinstance(first_timestamp, (int, float)):
+                    hours = int(first_timestamp // 3600)
+                    minutes = int((first_timestamp % 3600) // 60)
+                    seconds = int(first_timestamp % 60)
+                    start_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                
+                if isinstance(last_timestamp, (int, float)):
+                    hours = int(last_timestamp // 3600)
+                    minutes = int((last_timestamp % 3600) // 60)
+                    seconds = int(last_timestamp % 60)
+                    end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            # Use detailed batch analysis
+            detailed_analysis = await analyze_batch_with_detailed_insights(batch, batch_id, start_time, end_time)
+            
+            # Extract individual frame results from detailed analysis
+            if detailed_analysis and 'detailed_analyses' in detailed_analysis:
+                return detailed_analysis['detailed_analyses']
+            else:
+                # Fallback to original method if detailed analysis fails
+                return await analyze_frames_batch_with_ai(batch, batch_id)
+    
+    # Create batch processing tasks
+    batch_tasks = [
+        process_batch(batch, i) for i, batch in enumerate(batches)
+    ]
+    
+    # Execute all batches in parallel
+    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+    
+    # Flatten results and handle exceptions
+    all_results = []
+    for i, result in enumerate(batch_results):
+        if isinstance(result, Exception):
+            logger.error(f"Batch {i + 1} failed: {result}")
+            # Create error results for this batch
+            batch = batches[i]
+            error_results = [
+                {
+                    "frame_number": frame_data["frame_number"],
+                    "analysis": f"Error processing batch: {str(result)}",
+                    "base64_data": frame_data["base64_data"],
+                    "batch_processed": True,
+                    "batch_id": f"batch_{i + 1}",
+                    "error": True
+                }
+                for frame_data in batch
+            ]
+            all_results.extend(error_results)
+        else:
+            all_results.extend(result)
+    
+    logger.info(f"Completed batch processing: {len(all_results)} frames processed")
+    return all_results
 
 
 async def process_frame_with_ai(frame_data: dict, semaphore: asyncio.Semaphore) -> dict:
@@ -1779,19 +2224,30 @@ async def process_video_frames_parallel(
             
             analysis_start = time.time()
             
-            analysis_tasks = [
-                process_frame_with_ai(frame_data, ai_semaphore)
-                for frame_data in valid_frames
-                if isinstance(frame_data, dict)
-            ]
+            # Use batch processing instead of individual frame processing
+            if len(valid_frames) > 1:
+                # Process frames in batches for efficiency
+                logger.info(f"Using batch processing for {len(valid_frames)} frames")
+                analyzed_frames = await process_frames_in_batches(valid_frames, ai_semaphore, BATCH_SIZE)
+            else:
+                # Fallback to individual processing for single frames
+                logger.info("Using individual processing for single frame")
+                analysis_tasks = [
+                    process_frame_with_ai(frame_data, ai_semaphore)
+                    for frame_data in valid_frames
+                    if isinstance(frame_data, dict)
+                ]
+                analyzed_frames = await asyncio.gather(*analysis_tasks, return_exceptions=True)
             
-            analyzed_frames = await asyncio.gather(*analysis_tasks, return_exceptions=True)
-            
-            # Filter out exceptions
-            valid_analyses = [
-                frame for frame in analyzed_frames 
-                if not isinstance(frame, Exception)
-            ]
+            # Filter out exceptions (for individual processing fallback)
+            if len(valid_frames) == 1:
+                valid_analyses = [
+                    frame for frame in analyzed_frames 
+                    if not isinstance(frame, Exception)
+                ]
+            else:
+                # Batch processing already handles exceptions
+                valid_analyses = analyzed_frames
             
             analysis_time = time.time() - analysis_start
             logger.info(f"Analyzed {len(valid_analyses)} frames in {analysis_time:.2f}s")
@@ -1863,7 +2319,7 @@ async def submit_video_observation(
     file: UploadFile = File(...),
     user_name: Optional[str] = Form(None),
     observer_name: Optional[str] = Form("api_controller"),
-    fps: Optional[float] = Form(0.1)
+    fps: Optional[float] = Form(0.03)  # Reduced from 0.1 to 0.03 (70% reduction)
 ):
     """Submit video observation"""
     try:

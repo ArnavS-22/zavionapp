@@ -34,7 +34,7 @@ class OpenAITextClient:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.api_base = os.getenv("OPENAI_API_BASE")
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # Changed from gpt-4o to gpt-4o-mini (cheaper)
         self.organization = os.getenv("OPENAI_ORGANIZATION")
         
         logger.info("OpenAI Environment Debug:")

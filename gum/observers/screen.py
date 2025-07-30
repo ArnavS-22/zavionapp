@@ -173,7 +173,7 @@ class Screen(Observer):
         _MON_START (int): Index of first real display in mss.
     """
 
-    _CAPTURE_FPS: int = 10
+    _CAPTURE_FPS: int = 3  # Reduced from 10 to 3 FPS (70% reduction)
     _DEBOUNCE_SEC: int = 1  # Reduced from 2 to 1 second for faster response
     _MON_START: int = 1     # first real display in mss
 
@@ -189,6 +189,7 @@ class Screen(Observer):
         debug: bool = False,
         api_key: str | None = None,
         api_base: str | None = None,
+        buffer_minutes: int = 10,  # New: buffer duration in minutes
     ) -> None:
         """Initialize the Screen observer.
         
@@ -203,6 +204,7 @@ class Screen(Observer):
             model_name (str, optional): GPT model to use for vision analysis. Defaults to "gpt-4o-mini".
             history_k (int, optional): Number of recent screenshots to keep in history. Defaults to 10.
             debug (bool, optional): Enable debug logging. Defaults to False.
+            buffer_minutes (int, optional): Buffer duration in minutes before processing. Defaults to 10.
         """
         self.screens_dir = os.path.abspath(os.path.expanduser(screenshots_dir))
         os.makedirs(self.screens_dir, exist_ok=True)
@@ -218,10 +220,23 @@ class Screen(Observer):
         # state shared with worker
         self._frames: Dict[int, Any] = {}
         self._frame_lock = asyncio.Lock()
+        
+        # Frame deduplication
+        self._last_frame_hashes: Dict[int, str] = {}
+        self._frame_similarity_threshold = 0.95  # Skip if 95%+ similar
 
         self._history: deque[str] = deque(maxlen=max(0, history_k))
         self._pending_event: Optional[dict] = None
         self._debounce_handle: Optional[asyncio.TimerHandle] = None
+        
+        # Buffer system for 10-minute processing
+        self._buffer_minutes = buffer_minutes
+        self._buffer_seconds = buffer_minutes * 60
+        self._buffer: List[dict] = []  # Store buffered events
+        self._buffer_lock = asyncio.Lock()  # Thread safety for buffer
+        self._buffer_timer: Optional[asyncio.TimerHandle] = None  # Timer for batch processing
+        self._buffer_start_time: Optional[float] = None  # When current buffer started
+        
         self.client = AsyncOpenAI(
             # try the class, then the env for screen, then the env for gum
             base_url=api_base or os.getenv("SCREEN_LM_API_BASE") or os.getenv("GUM_LM_API_BASE"), 
@@ -263,6 +278,512 @@ class Screen(Observer):
         """
         with open(img_path, "rb") as fh:
             return base64.b64encode(fh.read()).decode()
+    
+    def _get_frame_hash(self, frame) -> str:
+        """Get a simple hash of frame data for deduplication."""
+        import hashlib
+        # Use frame RGB data for hashing
+        frame_data = frame.rgb[:1000]  # Use first 1000 bytes for quick hash
+        return hashlib.md5(frame_data).hexdigest()
+    
+    def _is_frame_similar(self, frame, monitor_idx: int) -> bool:
+        """Check if frame is similar to previous frame (deduplication)."""
+        current_hash = self._get_frame_hash(frame)
+        last_hash = self._last_frame_hashes.get(monitor_idx)
+        
+        if last_hash is None:
+            self._last_frame_hashes[monitor_idx] = current_hash
+            return False
+        
+        # Simple similarity check - if hashes are identical, skip
+        if current_hash == last_hash:
+            return True
+        
+        self._last_frame_hashes[monitor_idx] = current_hash
+        return False
+
+    # ─────────────────────────────── buffer management
+    async def _add_to_buffer(self, before_path: str, after_path: str, event_type: str, monitor_idx: int) -> None:
+        """Add an event to the buffer for batch processing.
+        
+        Args:
+            before_path (str): Path to the "before" screenshot.
+            after_path (str): Path to the "after" screenshot.
+            event_type (str): Type of event (move, click, scroll).
+            monitor_idx (int): Monitor index where event occurred.
+        """
+        async with self._buffer_lock:
+            # Start buffer timer if this is the first event
+            if not self._buffer and self._buffer_start_time is None:
+                self._buffer_start_time = time.time()
+                loop = asyncio.get_running_loop()
+                self._buffer_timer = loop.call_later(self._buffer_seconds, self._schedule_buffer_processing)
+                if self.debug:
+                    log = logging.getLogger("Screen")
+                    log.info(f"Buffer started - will process in {self._buffer_minutes} minutes")
+            
+            # Add event to buffer
+            self._buffer.append({
+                'before_path': before_path,
+                'after_path': after_path,
+                'event_type': event_type,
+                'monitor_idx': monitor_idx,
+                'timestamp': time.time()
+            })
+            
+            if self.debug:
+                log = logging.getLogger("Screen")
+                log.info(f"Added event to buffer (size: {len(self._buffer)})")
+
+    def _schedule_buffer_processing(self) -> None:
+        """Schedule buffer processing as an async task."""
+        loop = asyncio.get_running_loop()
+        asyncio.run_coroutine_threadsafe(self._process_buffer(), loop)
+
+    async def _process_buffer(self) -> None:
+        """Process all buffered events in a single batch."""
+        async with self._buffer_lock:
+            if not self._buffer:
+                return
+            
+            buffer_copy = self._buffer.copy()
+            self._buffer.clear()
+            self._buffer_start_time = None
+            self._buffer_timer = None
+            
+            if self.debug:
+                log = logging.getLogger("Screen")
+                log.info(f"Processing buffer with {len(buffer_copy)} events")
+        
+        # Process all events in the buffer
+        try:
+            # Group events by monitor for better context
+            monitor_events = {}
+            for event in buffer_copy:
+                monitor_idx = event['monitor_idx']
+                if monitor_idx not in monitor_events:
+                    monitor_events[monitor_idx] = []
+                monitor_events[monitor_idx].append(event)
+            
+            # Process each monitor's events
+            for monitor_idx, events in monitor_events.items():
+                await self._process_monitor_events(monitor_idx, events)
+                
+        except Exception as e:
+            log = logging.getLogger("Screen")
+            log.error(f"Error processing buffer: {e}")
+            # Fallback: process events individually
+            for event in buffer_copy:
+                try:
+                    await self._process_single_event(event)
+                except Exception as single_error:
+                    log.error(f"Error processing single event: {single_error}")
+
+    async def _process_monitor_events(self, monitor_idx: int, events: List[dict]) -> None:
+        """Process all events for a specific monitor in batch with detailed insights.
+        
+        Args:
+            monitor_idx (int): Monitor index.
+            events (List[dict]): List of events for this monitor.
+        """
+        if not events:
+            return
+        
+        # Prepare frame batch data for detailed analysis
+        frame_batch = []
+        event_summaries = []
+        
+        for i, event in enumerate(events):
+            # Encode images to base64 for analysis
+            before_base64 = self._encode_image(event['before_path'])
+            after_base64 = self._encode_image(event['after_path'])
+            
+            # Create frame data with timestamps
+            frame_data = {
+                "frame_number": i + 1,
+                "timestamp": event.get('timestamp', time.time()),
+                "event_type": event['event_type'],
+                "base64_data": before_base64,  # Use before image as primary
+                "after_base64_data": after_base64,
+                "monitor_idx": event['monitor_idx'],
+                "before_path": event['before_path'],
+                "after_path": event['after_path']
+            }
+            frame_batch.append(frame_data)
+            event_summaries.append(f"{event['event_type']} on monitor {event['monitor_idx']}")
+        
+        # Add to history for context
+        for event in events:
+            self._history.append(event['before_path'])
+        
+        # Calculate time range for detailed analysis
+        start_time = None
+        end_time = None
+        if frame_batch:
+            first_timestamp = frame_batch[0].get("timestamp", 0)
+            last_timestamp = frame_batch[-1].get("timestamp", 0)
+            
+            if isinstance(first_timestamp, (int, float)):
+                hours = int(first_timestamp // 3600)
+                minutes = int((first_timestamp % 3600) // 60)
+                seconds = int(first_timestamp % 60)
+                start_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            if isinstance(last_timestamp, (int, float)):
+                hours = int(last_timestamp // 3600)
+                minutes = int((last_timestamp % 3600) // 60)
+                seconds = int(last_timestamp % 60)
+                end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        # Use detailed batch analysis
+        try:
+            detailed_analysis = await self._analyze_batch_with_detailed_insights(
+                frame_batch, 
+                f"monitor_{monitor_idx}_batch", 
+                start_time, 
+                end_time
+            )
+            
+            # Extract insights from detailed analysis
+            if detailed_analysis and 'detailed_analyses' in detailed_analysis:
+                insights = []
+                for analysis in detailed_analysis['detailed_analyses']:
+                    if 'analysis' in analysis and analysis['analysis']:
+                        insights.append(analysis['analysis'])
+                
+                # Combine insights into comprehensive analysis
+                combined_analysis = "\n\n".join(insights)
+                
+                # Add batch summary if available
+                if 'summary' in detailed_analysis:
+                    combined_analysis += f"\n\nBatch Summary: {detailed_analysis['summary']}"
+                
+                # Emit detailed analysis result
+                await self.update_queue.put(Update(content=combined_analysis, content_type="input_text"))
+                
+            else:
+                # Fallback to original method if detailed analysis fails
+                await self._process_monitor_events_fallback(monitor_idx, events)
+                
+        except Exception as exc:
+            logging.getLogger("Screen").error(f"Detailed batch analysis failed: {exc}")
+            # Fallback to original method
+            await self._process_monitor_events_fallback(monitor_idx, events)
+        
+        if self.debug:
+            log = logging.getLogger("Screen")
+            log.info(f"Processed {len(events)} events for monitor {monitor_idx} with detailed analysis")
+
+    async def _process_single_event(self, event: dict) -> None:
+        """Process a single event (fallback method).
+        
+        Args:
+            event (dict): Event data.
+        """
+        await self._process_and_emit(event['before_path'], event['after_path'])
+
+    async def _process_monitor_events_fallback(self, monitor_idx: int, events: List[dict]) -> None:
+        """Fallback method for processing monitor events using original approach.
+        
+        Args:
+            monitor_idx (int): Monitor index.
+            events (List[dict]): List of events for this monitor.
+        """
+        if not events:
+            return
+        
+        # Collect all image paths for batch processing
+        all_paths = []
+        event_summaries = []
+        
+        for event in events:
+            all_paths.extend([event['before_path'], event['after_path']])
+            event_summaries.append(f"{event['event_type']} on monitor {event['monitor_idx']}")
+        
+        # Get historical context
+        prev_paths = list(self._history)
+        
+        # Batch process with AI
+        try:
+            # Create a comprehensive prompt for batch processing
+            batch_prompt = f"""Analyze this sequence of screen interactions: {', '.join(event_summaries)}.
+            
+            {self.transcription_prompt}"""
+            
+            transcription = await self._call_gpt_vision(batch_prompt, all_paths)
+        except Exception as exc:
+            transcription = f"[batch transcription failed: {exc}]"
+        
+        # Create summary with historical context
+        try:
+            summary_prompt = f"""Summarize this batch of screen interactions with historical context: {', '.join(event_summaries)}.
+            
+            {self.summary_prompt}"""
+            
+            summary_paths = prev_paths + all_paths
+            summary = await self._call_gpt_vision(summary_prompt, summary_paths)
+        except Exception as exc:
+            summary = f"[batch summary failed: {exc}]"
+        
+        # Emit combined result
+        txt = (transcription + summary).strip()
+        await self.update_queue.put(Update(content=txt, content_type="input_text"))
+
+    async def _analyze_batch_with_detailed_insights(self, frame_batch: List[dict], batch_id: str = "batch", start_time: Optional[str] = None, end_time: Optional[str] = None) -> dict:
+        """Analyze a batch of frames/events with detailed bullet-point insights and precise timestamp correlation.
+        
+        Args:
+            frame_batch (List[dict]): List of frame/event data with timestamps
+            batch_id (str): Identifier for the batch
+            start_time (Optional[str]): Start time of the batch (HH:MM:SS format)
+            end_time (Optional[str]): End time of the batch (HH:MM:SS format)
+            
+        Returns:
+            dict: Structured analysis with detailed insights
+        """
+        try:
+            logging.getLogger("Screen").info(f"Starting detailed batch analysis for {len(frame_batch)} frames/events (batch: {batch_id})")
+            
+            # Prepare batch data with timestamps
+            frame_info = []
+            event_timeline = []
+            
+            for i, frame_data in enumerate(frame_batch):
+                frame_number = frame_data.get("frame_number", i + 1)
+                timestamp = frame_data.get("timestamp", 0)
+                event_type = frame_data.get("event_type", "screen_capture")
+                
+                # Convert timestamp to readable format
+                if isinstance(timestamp, (int, float)):
+                    # Convert seconds to HH:MM:SS format
+                    hours = int(timestamp // 3600)
+                    minutes = int((timestamp % 3600) // 60)
+                    seconds = int(timestamp % 60)
+                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                else:
+                    time_str = str(timestamp)
+                
+                filename = f"frame_{frame_number:03d}.jpg"
+                frame_info.append(f"Frame {frame_number}: {filename} at {time_str}")
+                event_timeline.append(f"{time_str}: {event_type}")
+            
+            # Determine time range
+            if not start_time and frame_batch:
+                first_timestamp = frame_batch[0].get("timestamp", 0)
+                if isinstance(first_timestamp, (int, float)):
+                    hours = int(first_timestamp // 3600)
+                    minutes = int((first_timestamp % 3600) // 60)
+                    seconds = int(first_timestamp % 60)
+                    start_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            if not end_time and frame_batch:
+                last_timestamp = frame_batch[-1].get("timestamp", 0)
+                if isinstance(last_timestamp, (int, float)):
+                    hours = int(last_timestamp // 3600)
+                    minutes = int((last_timestamp % 3600) // 60)
+                    seconds = int(last_timestamp % 60)
+                    end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            time_range = f"{start_time or '00:00:00'} - {end_time or '00:00:00'}"
+            
+            # Create comprehensive system prompt for detailed analysis
+            frame_list = "\n".join(frame_info)
+            timeline = "\n".join(event_timeline)
+            
+            system_prompt = f"""You are a professional workflow analyst specializing in user behavior and productivity optimization. Analyze this sequence of {len(frame_batch)} screen captures and events to provide detailed insights about the user's workflow, productivity patterns, and behavioral tendencies.
+
+EVENT TIMELINE:
+{timeline}
+
+FRAME SEQUENCE:
+{frame_list}
+
+ANALYSIS REQUIREMENTS:
+You must provide a structured analysis following this EXACT format:
+
+WORKFLOW ANALYSIS ({time_range})
+
+• Specific Problem Moments (exact timestamps)
+HH:MM:SS: [Specific issue or distraction], [duration/impact]
+HH:MM:SS: [Another issue], [resolution time]
+
+• Productivity Patterns
+Peak focus: [time range] ([activity description])
+Distraction trigger: [specific event] at [time]
+Recovery pattern: [time to regain focus]
+
+• Application Usage
+Most used: [App name] ([X.X minutes])
+Context switches: [number] times in [duration]
+Switch cost: Average [X] seconds per switch
+
+• Behavioral Insights
+[Specific observation about user behavior with evidence]
+[Pattern identified with supporting details]
+[Recommendation based on observed data]
+
+ANALYSIS GUIDELINES:
+1. Extract precise timestamps from the event timeline
+2. Identify specific moments of productivity loss or distraction
+3. Analyze application switching patterns and context costs
+4. Look for behavioral patterns that impact workflow efficiency
+5. Provide actionable recommendations based on observed behavior
+6. Use exact HH:MM:SS format for all timestamps
+7. Be specific about durations, frequencies, and impact
+8. Focus on actionable insights that can improve productivity
+
+Provide a comprehensive analysis that helps understand and optimize the user's workflow."""
+            
+            # Process each frame individually but with enhanced context
+            detailed_analyses = []
+            for i, frame_data in enumerate(frame_batch):
+                try:
+                    frame_number = frame_data.get("frame_number", i + 1)
+                    base64_data = frame_data.get("base64_data", "")
+                    timestamp = frame_data.get("timestamp", 0)
+                    event_type = frame_data.get("event_type", "screen_capture")
+                    
+                    # Convert timestamp to readable format
+                    if isinstance(timestamp, (int, float)):
+                        hours = int(timestamp // 3600)
+                        minutes = int((timestamp % 3600) // 60)
+                        seconds = int(timestamp % 60)
+                        time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    else:
+                        time_str = str(timestamp)
+                    
+                    filename = f"frame_{frame_number:03d}.jpg"
+                    
+                    # Create frame-specific prompt with enhanced context
+                    frame_prompt = f"""This is frame {i + 1} of {len(frame_batch)} in a detailed workflow analysis sequence.
+
+{system_prompt}
+
+CURRENT FRAME CONTEXT:
+- Frame: {filename}
+- Timestamp: {time_str}
+- Event Type: {event_type}
+- Position in sequence: {i + 1}/{len(frame_batch)}
+
+Analyze this specific frame in the context of the overall workflow sequence, focusing on the user's behavior at this exact moment and how it relates to the broader productivity patterns."""
+                    
+                    # Use the existing vision completion method
+                    analysis = await self._call_gpt_vision(frame_prompt, [frame_data.get("before_path", "")])
+                    
+                    if analysis:
+                        detailed_analyses.append({
+                            "frame_number": frame_number,
+                            "timestamp": time_str,
+                            "event_type": event_type,
+                            "analysis": analysis,
+                            "base64_data": base64_data,
+                            "batch_processed": True,
+                            "batch_id": batch_id
+                        })
+                    else:
+                        detailed_analyses.append({
+                            "frame_number": frame_number,
+                            "timestamp": time_str,
+                            "event_type": event_type,
+                            "analysis": "Error: Empty response from vision model",
+                            "base64_data": base64_data,
+                            "batch_processed": True,
+                            "batch_id": batch_id,
+                            "error": True
+                        })
+                        
+                except Exception as frame_error:
+                    logging.getLogger("Screen").error(f"Error processing frame {frame_data.get('frame_number', 'unknown')} in detailed batch: {frame_error}")
+                    detailed_analyses.append({
+                        "frame_number": frame_data.get("frame_number", i + 1),
+                        "timestamp": str(frame_data.get("timestamp", 0)),
+                        "event_type": frame_data.get("event_type", "screen_capture"),
+                        "analysis": f"Error analyzing frame in detailed batch: {str(frame_error)}",
+                        "base64_data": frame_data.get("base64_data", ""),
+                        "batch_processed": True,
+                        "batch_id": batch_id,
+                        "error": True
+                    })
+            
+            # Create consolidated analysis
+            consolidated_analysis = {
+                "batch_id": batch_id,
+                "time_range": time_range,
+                "frame_count": len(frame_batch),
+                "detailed_analyses": detailed_analyses,
+                "summary": {
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "total_duration": len(frame_batch),
+                    "event_types": list(set(f.get("event_type", "screen_capture") for f in frame_batch))
+                }
+            }
+            
+            logging.getLogger("Screen").info(f"Detailed batch analysis completed for {len(detailed_analyses)} frames")
+            return consolidated_analysis
+            
+        except Exception as e:
+            logging.getLogger("Screen").error(f"Detailed batch analysis failed: {str(e)}")
+            return {
+                "batch_id": batch_id,
+                "time_range": f"{start_time or '00:00:00'} - {end_time or '00:00:00'}",
+                "frame_count": len(frame_batch),
+                "detailed_analyses": [],
+                "error": str(e),
+                "summary": {
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "total_duration": len(frame_batch),
+                    "event_types": []
+                }
+            }
+
+    def get_buffer_status(self) -> dict:
+        """Get current buffer status for monitoring.
+        
+        Returns:
+            dict: Buffer status information.
+        """
+        async def _get_status():
+            async with self._buffer_lock:
+                buffer_size = len(self._buffer)
+                time_remaining = 0
+                if self._buffer_start_time and self._buffer_timer:
+                    elapsed = time.time() - self._buffer_start_time
+                    time_remaining = max(0, self._buffer_seconds - elapsed)
+                
+                return {
+                    'buffer_size': buffer_size,
+                    'buffer_minutes': self._buffer_minutes,
+                    'time_remaining_seconds': time_remaining,
+                    'is_active': self._buffer_timer is not None,
+                    'events': [
+                        {
+                            'type': event['event_type'],
+                            'monitor': event['monitor_idx'],
+                            'timestamp': event['timestamp']
+                        }
+                        for event in self._buffer
+                    ]
+                }
+        
+        # Since this is called from sync context, we need to handle it carefully
+        try:
+            loop = asyncio.get_running_loop()
+            # If we're in an async context, we can't use run_coroutine_threadsafe
+            # So we'll return a simple status without the full details
+            return {
+                'buffer_size': len(self._buffer),
+                'buffer_minutes': self._buffer_minutes,
+                'is_active': self._buffer_timer is not None
+            }
+        except RuntimeError:
+            # Not in async context, return basic info
+            return {
+                'buffer_size': len(self._buffer),
+                'buffer_minutes': self._buffer_minutes,
+                'is_active': self._buffer_timer is not None
+            }
 
     # ─────────────────────────────── OpenAI Vision (async)
     async def _call_gpt_vision(self, prompt: str, img_paths: list[str]) -> str:
@@ -314,32 +835,17 @@ class Screen(Observer):
         )
         return path
 
-    async def _process_and_emit(self, before_path: str, after_path: str) -> None:
+    async def _process_and_emit(self, before_path: str, after_path: str, event_type: str = "interaction", monitor_idx: int = 1) -> None:
         """Process screenshots and emit an update.
         
         Args:
             before_path (str): Path to the "before" screenshot.
             after_path (str | None): Path to the "after" screenshot, if any.
+            event_type (str): Type of event (move, click, scroll, interaction).
+            monitor_idx (int): Monitor index where event occurred.
         """
-        # chronology: append 'before' first (history order == real order)
-        self._history.append(before_path)
-        prev_paths = list(self._history)
-
-        # async OpenAI calls
-        try:
-            transcription = await self._call_gpt_vision(self.transcription_prompt, [before_path, after_path])
-        except Exception as exc:                                        # pragma: no cover
-            transcription = f"[transcription failed: {exc}]"
-
-        prev_paths.append(before_path)
-        prev_paths.append(after_path)
-        try:
-            summary = await self._call_gpt_vision(self.summary_prompt, prev_paths)
-        except Exception as exc:                                    # pragma: no cover
-            summary = f"[summary failed: {exc}]"
-
-        txt = (transcription + summary).strip()
-        await self.update_queue.put(Update(content=txt, content_type="input_text"))
+        # Add to buffer for batch processing instead of immediate processing
+        await self._add_to_buffer(before_path, after_path, event_type, monitor_idx)
 
     # ─────────────────────────────── skip guard
     def _skip(self) -> bool:
@@ -437,7 +943,7 @@ class Screen(Observer):
 
             bef_path = await self._save_frame(ev["before"], "before")
             aft_path = await self._save_frame(aft, "after")
-            await self._process_and_emit(bef_path, aft_path)
+            await self._process_and_emit(bef_path, aft_path, ev["type"], ev["mon"])
 
             log.info(f"{ev['type']} captured on monitor {ev['mon']}")
             self._pending_event = None
@@ -465,6 +971,11 @@ class Screen(Observer):
             for idx, m in enumerate(mons, 1):
                 try:
                     frame = sct.grab(m)  # Use sct directly
+                    
+                    # Skip if frame is too similar to previous (deduplication)
+                    if self._is_frame_similar(frame, idx):
+                        continue
+                    
                     async with self._frame_lock:
                         self._frames[idx] = frame
                 except Exception as e:
@@ -478,4 +989,9 @@ class Screen(Observer):
         listener.stop()
         if self._debounce_handle:
             self._debounce_handle.cancel()
+        if self._buffer_timer:
+            self._buffer_timer.cancel()
+        # Process any remaining buffered events
+        if self._buffer:
+            await self._process_buffer()
         sct.close()  # Close mss context

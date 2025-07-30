@@ -786,9 +786,11 @@ class GUMApp {
                     </div>
                 </div>
                 
+                ${this.generateDetailedAnalysisCard(results)}
+                
                 <div class="result-card full-width">
                     <div class="result-header">
-                        <h3><i class="fas fa-list"></i> Detailed Analysis</h3>
+                        <h3><i class="fas fa-list"></i> Raw Analysis Data</h3>
                     </div>
                     <div class="result-content">
                         <pre class="analysis-details">${JSON.stringify(results, null, 2)}</pre>
@@ -841,6 +843,151 @@ class GUMApp {
                 `;
             }
         }).join('');
+    }
+
+    /**
+     * Generate detailed analysis card with bullet-point insights
+     */
+    generateDetailedAnalysisCard(results) {
+        // Check if we have detailed analysis data
+        const detailedAnalysis = results.detailed_analysis;
+        if (!detailedAnalysis) {
+            return '';
+        }
+
+        // Extract time range from detailed analysis
+        const timeRange = detailedAnalysis.time_range || 'Unknown Time Range';
+        const frameCount = detailedAnalysis.frame_count || 0;
+        const batchId = detailedAnalysis.batch_id || 'Unknown Batch';
+
+        // Generate detailed insights HTML
+        const detailedInsights = this.generateDetailedInsights(detailedAnalysis);
+
+        return `
+            <div class="result-card full-width detailed-analysis-card">
+                <div class="result-header">
+                    <h3><i class="fas fa-clock"></i> Workflow Analysis (${timeRange})</h3>
+                    <div class="analysis-meta">
+                        <span class="meta-item"><i class="fas fa-layer-group"></i> ${frameCount} frames</span>
+                        <span class="meta-item"><i class="fas fa-tag"></i> ${batchId}</span>
+                    </div>
+                </div>
+                <div class="result-content">
+                    <div class="detailed-insights">
+                        ${detailedInsights}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Generate detailed insights from the enhanced analysis format
+     */
+    generateDetailedInsights(detailedAnalysis) {
+        if (!detailedAnalysis.detailed_analyses || !detailedAnalysis.detailed_analyses.length) {
+            return '<p class="no-data">No detailed insights available</p>';
+        }
+
+        // Group insights by category
+        const insights = {
+            problemMoments: [],
+            productivityPatterns: [],
+            applicationUsage: [],
+            behavioralInsights: []
+        };
+
+        // Process each detailed analysis
+        detailedAnalysis.detailed_analyses.forEach(analysis => {
+            if (analysis.analysis) {
+                const content = analysis.analysis;
+                
+                // Extract problem moments (timestamps)
+                const problemMatches = content.match(/(\d{2}:\d{2}:\d{2}):\s*([^•\n]+)/g);
+                if (problemMatches) {
+                    problemMatches.forEach(match => {
+                        insights.problemMoments.push(match.trim());
+                    });
+                }
+
+                // Extract productivity patterns
+                const patternMatches = content.match(/•\s*Productivity Patterns[\s\S]*?(?=•|$)/g);
+                if (patternMatches) {
+                    patternMatches.forEach(match => {
+                        insights.productivityPatterns.push(match.trim());
+                    });
+                }
+
+                // Extract application usage
+                const appMatches = content.match(/•\s*Application Usage[\s\S]*?(?=•|$)/g);
+                if (appMatches) {
+                    appMatches.forEach(match => {
+                        insights.applicationUsage.push(match.trim());
+                    });
+                }
+
+                // Extract behavioral insights
+                const behaviorMatches = content.match(/•\s*Behavioral Insights[\s\S]*?(?=•|$)/g);
+                if (behaviorMatches) {
+                    behaviorMatches.forEach(match => {
+                        insights.behavioralInsights.push(match.trim());
+                    });
+                }
+            }
+        });
+
+        // Generate HTML for each category
+        return `
+            <div class="insights-categories">
+                ${this.generateInsightCategory('Problem Moments', insights.problemMoments, 'exclamation-triangle', 'problem-moments')}
+                ${this.generateInsightCategory('Productivity Patterns', insights.productivityPatterns, 'chart-line', 'productivity-patterns')}
+                ${this.generateInsightCategory('Application Usage', insights.applicationUsage, 'desktop', 'application-usage')}
+                ${this.generateInsightCategory('Behavioral Insights', insights.behavioralInsights, 'brain', 'behavioral-insights')}
+            </div>
+        `;
+    }
+
+    /**
+     * Generate HTML for an insight category
+     */
+    generateInsightCategory(title, items, icon, className) {
+        if (!items.length) {
+            return '';
+        }
+
+        const uniqueItems = [...new Set(items)]; // Remove duplicates
+
+        return `
+            <div class="insight-category ${className}">
+                <div class="category-header">
+                    <h4><i class="fas fa-${icon}"></i> ${title}</h4>
+                </div>
+                <div class="category-content">
+                    ${uniqueItems.map(item => `
+                        <div class="insight-item">
+                            <div class="insight-bullet">•</div>
+                            <div class="insight-text">${this.formatInsightText(item)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Format insight text with proper styling
+     */
+    formatInsightText(text) {
+        // Highlight timestamps
+        text = text.replace(/(\d{2}:\d{2}:\d{2})/g, '<span class="timestamp">$1</span>');
+        
+        // Highlight key terms
+        text = text.replace(/(Peak focus|Distraction trigger|Recovery pattern|Most used|Context switches|Switch cost)/g, '<strong>$1</strong>');
+        
+        // Convert line breaks to <br> tags
+        text = text.replace(/\n/g, '<br>');
+        
+        return text;
     }
 
     /**

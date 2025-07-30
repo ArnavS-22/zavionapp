@@ -334,4 +334,42 @@
     background: #450a0a;
     border-color: #7f1d1d;
     color: #fca5a5;
+}
+
+/* Enhanced Chat Formatting */
+.timestamp-highlight {
+    background: var(--brand-cyan);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    font-weight: 600;
+    margin: 0 2px;
+}
+
+.bullet-point {
+    color: var(--brand-cyan);
+    font-weight: bold;
+    font-size: 14px;
+    margin-right: 4px;
+}
+
+.workflow-term {
+    color: var(--brand-cyan);
+    font-weight: 600;
+}
+
+/* Dark mode adjustments for enhanced chat */
+[data-theme="dark"] .timestamp-highlight {
+    background: var(--brand-cyan);
+    color: white;
+}
+
+[data-theme="dark"] .bullet-point {
+    color: var(--brand-cyan);
+}
+
+[data-theme="dark"] .workflow-term {
+    color: var(--brand-cyan);
 } 

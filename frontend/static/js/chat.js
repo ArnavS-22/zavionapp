@@ -59,11 +59,19 @@ class ZavionChat {
             type: 'assistant',
             content: `Hi! I'm your Zavion AI assistant. I've been learning about your behavior patterns and can help you understand your productivity, workflow, and habits. 
 
+I can now provide detailed timestamped insights about your workflow, including:
+• Specific problem moments with exact timestamps (HH:MM:SS)
+• Productivity patterns and peak focus times
+• Application usage and context switching patterns
+• Behavioral insights with actionable recommendations
+
 Try asking me:
 • "When am I most productive?"
 • "What apps do I use most during work?"
 • "How can I optimize my workflow?"
-• "Show me my recent behavior patterns"`,
+• "Show me my recent behavior patterns"
+• "What were my problem moments today?"
+• "When did I have the most context switches?"`,
             timestamp: new Date()
         };
         this.addMessage(welcomeMessage);
@@ -230,7 +238,27 @@ Try asking me:
 
     formatMessage(content) {
         // Convert line breaks to <br> tags
-        return content.replace(/\n/g, '<br>');
+        let formattedContent = content.replace(/\n/g, '<br>');
+        
+        // Highlight timestamps in HH:MM:SS format
+        formattedContent = formattedContent.replace(/(\d{2}:\d{2}:\d{2})/g, '<span class="timestamp-highlight">$1</span>');
+        
+        // Highlight bullet points
+        formattedContent = formattedContent.replace(/•\s*/g, '<span class="bullet-point">•</span> ');
+        
+        // Highlight key workflow terms
+        const workflowTerms = [
+            'Peak focus', 'Distraction trigger', 'Recovery pattern', 
+            'Most used', 'Context switches', 'Switch cost',
+            'Problem Moments', 'Productivity Patterns', 'Application Usage', 'Behavioral Insights'
+        ];
+        
+        workflowTerms.forEach(term => {
+            const regex = new RegExp(`(${term})`, 'gi');
+            formattedContent = formattedContent.replace(regex, '<strong class="workflow-term">$1</strong>');
+        });
+        
+        return formattedContent;
     }
 
     saveChatHistory() {

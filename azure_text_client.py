@@ -35,7 +35,7 @@ class AzureOpenAITextClient:
         self.api_key = os.getenv("AZURE_OPENAI_API_KEY")
         self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-        self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+        self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")  # Changed from gpt-4o to gpt-4o-mini (cheaper)
         
         logger.info("Azure OpenAI Environment Debug:")
         logger.info(f"   API Key: {self.api_key[:10] + '...' + self.api_key[-4:] if self.api_key else 'None'}")
