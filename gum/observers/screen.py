@@ -315,7 +315,7 @@ class Screen(Observer):
         return path
 
     async def _process_and_emit(self, before_path: str, after_path: str) -> None:
-        """Process screenshots and emit an update.
+        """Process screenshots and emit an update with robust error detection.
         
         Args:
             before_path (str): Path to the "before" screenshot.
@@ -325,21 +325,98 @@ class Screen(Observer):
         self._history.append(before_path)
         prev_paths = list(self._history)
 
-        # async OpenAI calls
+        # Step 1: Get transcription with validation
         try:
             transcription = await self._call_gpt_vision(self.transcription_prompt, [before_path, after_path])
-        except Exception as exc:                                        # pragma: no cover
-            transcription = f"[transcription failed: {exc}]"
+        except Exception as exc:
+            if self.debug:
+                logging.getLogger("Screen").warning(f"Transcription failed: {exc}")
+            return  # Skip on exception
+        
+        # Step 2: Validate transcription quality
+        if not self._is_valid_content(transcription):
+            if self.debug:
+                logging.getLogger("Screen").warning(f"Invalid transcription: {transcription[:100] if transcription else 'None'}...")
+            return  # Skip invalid content
 
         prev_paths.append(before_path)
         prev_paths.append(after_path)
+        
+        # Step 3: Get summary with validation
         try:
             summary = await self._call_gpt_vision(self.summary_prompt, prev_paths)
-        except Exception as exc:                                    # pragma: no cover
-            summary = f"[summary failed: {exc}]"
-
-        txt = (transcription + summary).strip()
+        except Exception as exc:
+            if self.debug:
+                logging.getLogger("Screen").warning(f"Summary failed: {exc}")
+            return  # Skip on exception
+        
+        # Step 4: Validate summary quality
+        if not self._is_valid_content(summary):
+            if self.debug:
+                logging.getLogger("Screen").warning(f"Invalid summary: {summary[:100] if summary else 'None'}...")
+            return  # Skip invalid content
+        
+        # Step 5: Combine and validate final content
+        txt = transcription.strip()
+        if not self._is_valid_final_content(txt):
+            if self.debug:
+                logging.getLogger("Screen").warning(f"Invalid final content: {txt[:100] if txt else 'None'}...")
+            return  # Skip invalid final content
+        
+        # Step 6: Send to behavioral analysis
         await self.update_queue.put(Update(content=txt, content_type="input_text"))
+
+    def _is_valid_content(self, content: str) -> bool:
+        """Check if content is valid for behavioral analysis."""
+        if not content or not content.strip():
+            return False
+        
+        content_lower = content.lower()
+        
+        # Check for error indicators
+        error_indicators = [
+            "failed", "error", "rate limit", "timeout", "unable to process",
+            "no content", "empty", "invalid", "exception", "429", "500", "503"
+        ]
+        
+        for indicator in error_indicators:
+            if indicator in content_lower:
+                return False
+        
+        # Check for minimum meaningful content
+        if len(content.strip()) < 50:
+            return False
+        
+        # Check for prompt pollution
+        prompt_indicators = [
+            "transcribe in markdown", "provide a detailed description",
+            "generate a handful of bullet points", "keep in mind that"
+        ]
+        
+        for indicator in prompt_indicators:
+            if indicator in content_lower:
+                return False
+        
+        return True
+
+    def _is_valid_final_content(self, content: str) -> bool:
+        """Additional validation for final content before sending to behavioral analysis."""
+        if not self._is_valid_content(content):
+            return False
+        
+        # Check for actual user activity indicators
+        activity_indicators = [
+            "user", "screen", "window", "application", "click", "scroll",
+            "typing", "reading", "viewing", "opened", "closed", "switched"
+        ]
+        
+        content_lower = content.lower()
+        has_activity = any(indicator in content_lower for indicator in activity_indicators)
+        
+        if not has_activity:
+            return False
+        
+        return True
 
     # ─────────────────────────────── skip guard
     def _skip(self) -> bool:
