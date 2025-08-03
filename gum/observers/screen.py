@@ -230,6 +230,7 @@ class Screen(Observer):
         self._debounce_handle: Optional[asyncio.TimerHandle] = None
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         
         # Buffer system for 10-minute processing
         self._buffer_minutes = buffer_minutes
@@ -245,6 +246,8 @@ class Screen(Observer):
 =======
 =======
 >>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
         # Check if batching is enabled
         use_batched = os.getenv("USE_BATCHED_CLIENT", "false").lower() == "true"
         
@@ -258,6 +261,9 @@ class Screen(Observer):
                 # try the class, then the env for screen, then the env for gum
                 base_url=api_base or os.getenv("SCREEN_LM_API_BASE") or os.getenv("GUM_LM_API_BASE"), 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
