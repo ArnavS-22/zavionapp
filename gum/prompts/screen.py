@@ -1,15 +1,31 @@
-TRANSCRIPTION_PROMPT = """Transcribe in markdown ALL the content from the screenshots of the user's screen.
+TRANSCRIPTION_PROMPT = """Transcribe ALL visible content in markdown exactly as shown. Include application names, URLs, file paths, and timestamps.
 
-NEVER SUMMARIZE ANYTHING. You must transcribe everything EXACTLY, word for word, but don't repeat yourself.
+While transcribing, note ONLY what you can clearly see:
+- Application names and window titles
+- Visible text content and UI elements
+- URLs and file paths that are clearly displayed
+- Any timestamps or dates visible on screen
 
-ALWAYS include all the application names, file paths, and website URLs in your transcript.
+DO NOT make assumptions about:
+- Cursor position (unless clearly visible)
+- Active window focus (unless obvious from UI)
+- User interaction state (unless clearly indicated)
+- Temporal context (unless explicitly shown)
 
-Create a FINAL structured markdown transcription."""
+Provide complete word-for-word transcription with ONLY observable interface context."""
 
-SUMMARY_PROMPT = """Provide a detailed description of the actions occuring across the provided images. The images are in the order they were taken.
+SUMMARY_PROMPT = """Analyze the screenshots to understand what the user is doing based on clearly visible evidence.
 
-Include as much relevant detail as possible, but remain concise.
+Focus on what you can definitively observe:
 
-Generate a handful of bullet points and reference *specific* actions the user is taking.
+**Visible Activity**: What specific actions can you see the user taking? (Only what's clearly visible)
 
-Keep in mind that that the content on the screen is what the user is viewing. It may not be what the user is actively doing or what they believe, so practice caution when making assumptions."""
+**Content Type**: What type of information/interface is visible? (Based on clearly displayed content)
+
+**Interface Elements**: What UI elements are clearly visible? (Windows, tabs, buttons, etc.)
+
+**Behavioral Context**: What does the visible content suggest about user activity? (Be conservative in interpretation)
+
+IMPORTANT: Only make observations based on clearly visible evidence. If something is unclear or not visible, do not make assumptions about it.
+
+Generate 3-4 specific observations about what you can clearly see the user doing."""

@@ -373,10 +373,11 @@ class Screen(Observer):
         
         content_lower = content.lower()
         
-        # Check for error indicators
+        # Check for actual error messages (not transcription content)
         error_indicators = [
-            "failed", "error", "rate limit", "timeout", "unable to process",
-            "no content", "empty", "invalid", "exception", "429", "500", "503"
+            "failed:", "error:", "rate limit", "timeout", "unable to process",
+            "no content", "empty", "invalid", "exception", "429", "500", "503",
+            "[transcription failed:", "[summary failed:"
         ]
         
         for indicator in error_indicators:
@@ -384,13 +385,15 @@ class Screen(Observer):
                 return False
         
         # Check for minimum meaningful content
-        if len(content.strip()) < 50:
+        if len(content.strip()) < 20:  # Reduced from 50 to allow shorter valid responses
             return False
         
-        # Check for prompt pollution
+        # Check for actual prompt pollution (the raw prompts, not transcription responses)
         prompt_indicators = [
-            "transcribe in markdown", "provide a detailed description",
-            "generate a handful of bullet points", "keep in mind that"
+            "transcribe in markdown all the content from the screenshots",
+            "provide a detailed description of the actions occurring across the provided images",
+            "generate a handful of bullet points and reference specific actions",
+            "keep in mind that that the content on the screen is what the user is viewing"
         ]
         
         for indicator in prompt_indicators:
@@ -404,19 +407,29 @@ class Screen(Observer):
         if not self._is_valid_content(content):
             return False
         
-        # Check for actual user activity indicators
-        activity_indicators = [
-            "user", "screen", "window", "application", "click", "scroll",
-            "typing", "reading", "viewing", "opened", "closed", "switched"
+        # Allow transcription content that describes user activity
+        # Transcription responses often start with "markdown" or contain screen content
+        content_lower = content.lower()
+        
+        # Check for transcription response indicators
+        transcription_indicators = [
+            "markdown", "screenshot", "application:", "window:", "browser:", 
+            "url:", "file:", "folder:", "text:", "content:", "user", "screen"
         ]
         
-        content_lower = content.lower()
+        has_transcription_content = any(indicator in content_lower for indicator in transcription_indicators)
+        
+        if has_transcription_content:
+            return True
+        
+        # If no transcription indicators, check for general activity
+        activity_indicators = [
+            "click", "scroll", "typing", "reading", "viewing", "opened", "closed", "switched"
+        ]
+        
         has_activity = any(indicator in content_lower for indicator in activity_indicators)
         
-        if not has_activity:
-            return False
-        
-        return True
+        return has_activity
 
     # ─────────────────────────────── skip guard
     def _skip(self) -> bool:
