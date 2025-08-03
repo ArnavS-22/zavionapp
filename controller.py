@@ -37,6 +37,7 @@ from gum import gum
 from gum.schemas import Update
 from gum.observers import Observer
 from unified_ai_client import UnifiedAIClient
+from batched_ai_client import BatchedAIClient, get_batched_client
 
 # Load environment variables
 load_dotenv(override=True)  # Ensure .env takes precedence
@@ -78,8 +79,14 @@ app.add_middleware(
 # Global GUM instance
 gum_instance: Optional[gum] = None
 
-# Global unified AI client
+# Global AI clients
 ai_client: Optional[UnifiedAIClient] = None
+batched_ai_client: Optional[BatchedAIClient] = None
+
+# Configuration for batching
+USE_BATCHED_CLIENT = os.getenv("USE_BATCHED_CLIENT", "true").lower() == "true"
+BATCH_INTERVAL_HOURS = float(os.getenv("BATCH_INTERVAL_HOURS", "1.0"))
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "50"))
 
 
 async def get_ai_client() -> UnifiedAIClient:
@@ -133,6 +140,31 @@ async def get_ai_client() -> UnifiedAIClient:
         logger.info("Unified AI client initialized with debug logging")
     
     return ai_client
+
+
+async def get_batched_ai_client() -> BatchedAIClient:
+    """Get the batched AI client for reduced API calls."""
+    global batched_ai_client
+    
+    if batched_ai_client is None:
+        logger.info("Initializing batched AI client")
+        batched_ai_client = BatchedAIClient(
+            batch_interval_hours=BATCH_INTERVAL_HOURS,
+            max_batch_size=MAX_BATCH_SIZE,
+            enable_fallback=True,
+            fallback_threshold_seconds=300  # 5 minutes
+        )
+        logger.info(f"Batched AI client initialized with {BATCH_INTERVAL_HOURS}h intervals")
+    
+    return batched_ai_client
+
+
+async def get_active_ai_client():
+    """Get the active AI client based on configuration."""
+    if USE_BATCHED_CLIENT:
+        return await get_batched_ai_client()
+    else:
+        return await get_ai_client()
 
 # === Pydantic Models ===
 
@@ -285,13 +317,13 @@ def process_image_for_analysis(file_content: bytes) -> str:
 
 
 async def analyze_image_with_ai(base64_image: str, filename: Optional[str] = None) -> str:
-    """Analyze image using the unified AI client."""
+    """Analyze image using the active AI client."""
     try:
         logger.info("Starting image analysis with vision model")
         logger.info(f"   File: {filename}")
         
-        # Get unified AI client
-        client = await get_ai_client()
+        # Get active AI client
+        client = await get_active_ai_client()
         
         # Create prompt for image analysis
         display_filename = filename or "uploaded_image"
@@ -307,11 +339,20 @@ async def analyze_image_with_ai(base64_image: str, filename: Optional[str] = Non
         
         Provide a detailed but concise analysis that will help understand user behavior."""
         
-        # Use the unified client for vision completion
-        analysis = await client.vision_completion(
-            text_prompt=prompt,
-            base64_image=base64_image
-        )
+        # Use the active client for vision completion
+        if USE_BATCHED_CLIENT:
+            # Use batched client with urgent=False for normal processing
+            analysis = await client.vision_completion(
+                text_prompt=prompt,
+                base64_image=base64_image,
+                urgent=False  # Allow batching for normal image analysis
+            )
+        else:
+            # Use unified client
+            analysis = await client.vision_completion(
+                text_prompt=prompt,
+                base64_image=base64_image
+            )
         
         if analysis:
             logger.info("Vision analysis completed")
@@ -946,6 +987,80 @@ async def get_rate_limit_stats():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error retrieving rate limit statistics"
+        )
+
+
+@app.get("/admin/batch-stats", response_model=dict)
+async def get_batch_stats():
+    """Get batching statistics for monitoring"""
+    try:
+        if not USE_BATCHED_CLIENT:
+            return {
+                "batching_enabled": False,
+                "message": "Batched client is not enabled"
+            }
+        
+        client = await get_batched_ai_client()
+        stats = client.get_stats()
+        
+        return {
+            "batching_enabled": True,
+            "batch_stats": stats,
+            "configuration": {
+                "batch_interval_hours": BATCH_INTERVAL_HOURS,
+                "max_batch_size": MAX_BATCH_SIZE,
+                "use_batched_client": USE_BATCHED_CLIENT
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting batch stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving batch statistics"
+        )
+
+
+@app.post("/admin/batch-process", response_model=dict)
+async def force_batch_process():
+    """Force immediate processing of pending batches"""
+    try:
+        if not USE_BATCHED_CLIENT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Batched client is not enabled"
+            )
+        
+        client = await get_batched_ai_client()
+        
+        # Get current stats before processing
+        before_stats = client.get_stats()
+        pending_count = before_stats['pending_requests']
+        
+        if pending_count == 0:
+            return {
+                "message": "No pending requests to process",
+                "pending_requests": 0
+            }
+        
+        # Force process the current batch
+        await client._process_batch()
+        
+        # Get stats after processing
+        after_stats = client.get_stats()
+        
+        return {
+            "message": f"Processed {pending_count} pending requests",
+            "pending_requests_before": pending_count,
+            "pending_requests_after": after_stats['pending_requests'],
+            "processed_requests": pending_count - after_stats['pending_requests'],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error forcing batch process: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing batch: {str(e)}"
         )
 
 # Add rate limit reset endpoint (admin only)
@@ -2480,10 +2595,21 @@ async def global_exception_handler(request, exc):
 async def startup_event():
     """Startup event handler."""
     logger.info("Starting GUM API Controller...")
-    logger.info(" AI Processing: Unified AI Client (Azure OpenAI + OpenRouter)")
-    logger.info("    Text Tasks: Azure OpenAI")
-    logger.info("    Vision Tasks: OpenRouter (Qwen Vision)")
-    logger.info(" Hybrid AI configuration initialized")
+    
+    if USE_BATCHED_CLIENT:
+        logger.info(" AI Processing: Batched AI Client (Reduced API Calls)")
+        logger.info(f"    Batch Interval: {BATCH_INTERVAL_HOURS} hours")
+        logger.info(f"    Max Batch Size: {MAX_BATCH_SIZE} requests")
+        logger.info("    Fallback: Enabled (5 minute threshold)")
+        logger.info("    Text Tasks: Azure OpenAI (Batched)")
+        logger.info("    Vision Tasks: OpenRouter (Batched)")
+        logger.info(" Batching configuration initialized for reduced API costs")
+    else:
+        logger.info(" AI Processing: Unified AI Client (Azure OpenAI + OpenRouter)")
+        logger.info("    Text Tasks: Azure OpenAI")
+        logger.info("    Vision Tasks: OpenRouter (Qwen Vision)")
+        logger.info(" Hybrid AI configuration initialized")
+    
     logger.info("GUM API Controller started successfully")
 
 

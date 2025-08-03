@@ -228,6 +228,7 @@ class Screen(Observer):
         self._history: deque[str] = deque(maxlen=max(0, history_k))
         self._pending_event: Optional[dict] = None
         self._debounce_handle: Optional[asyncio.TimerHandle] = None
+<<<<<<< Updated upstream
         
         # Buffer system for 10-minute processing
         self._buffer_minutes = buffer_minutes
@@ -240,10 +241,25 @@ class Screen(Observer):
         self.client = AsyncOpenAI(
             # try the class, then the env for screen, then the env for gum
             base_url=api_base or os.getenv("SCREEN_LM_API_BASE") or os.getenv("GUM_LM_API_BASE"), 
+=======
+        # Check if batching is enabled
+        use_batched = os.getenv("USE_BATCHED_CLIENT", "false").lower() == "true"
+        
+        if use_batched:
+            # Use batched client - will be initialized when needed
+            self.client = None
+            self.use_batched = True
+        else:
+            # Use direct OpenAI client
+            self.client = AsyncOpenAI(
+                # try the class, then the env for screen, then the env for gum
+                base_url=api_base or os.getenv("SCREEN_LM_API_BASE") or os.getenv("GUM_LM_API_BASE"), 
+>>>>>>> Stashed changes
 
-            # try the class, then the env for screen, then the env for GUM, then none
-            api_key=api_key or os.getenv("SCREEN_LM_API_KEY") or os.getenv("GUM_LM_API_KEY") or os.getenv("OPENAI_API_KEY") or "None"
-        )
+                # try the class, then the env for screen, then the env for GUM, then none
+                api_key=api_key or os.getenv("SCREEN_LM_API_KEY") or os.getenv("GUM_LM_API_KEY") or os.getenv("OPENAI_API_KEY") or "None"
+            )
+            self.use_batched = False
 
         # call parent
         super().__init__()
@@ -796,23 +812,46 @@ Analyze this specific frame in the context of the overall workflow sequence, foc
         Returns:
             str: GPT's analysis of the images.
         """
-        content = [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
-            }
-            for encoded in (await asyncio.gather(
+        if self.use_batched:
+            # Use batched client for vision completion
+            from batched_ai_client import get_batched_client
+            batched_client = await get_batched_client()
+            
+            # Encode images to base64
+            encoded_images = await asyncio.gather(
                 *[asyncio.to_thread(self._encode_image, p) for p in img_paths]
-            ))
-        ]
-        content.append({"type": "text", "text": prompt})
+            )
+            
+            # Use the first image for batched vision completion
+            # Note: Batched client currently supports single image, so we'll use the first one
+            base64_image = encoded_images[0] if encoded_images else ""
+            
+            return await batched_client.vision_completion(
+                text_prompt=prompt,
+                base64_image=base64_image,
+                max_tokens=2000,
+                temperature=0.1,
+                urgent=False  # Allow batching for screen analysis
+            )
+        else:
+            # Use direct OpenAI client
+            content = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+                }
+                for encoded in (await asyncio.gather(
+                    *[asyncio.to_thread(self._encode_image, p) for p in img_paths]
+                ))
+            ]
+            content.append({"type": "text", "text": prompt})
 
-        rsp = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[{"role": "user", "content": content}],
-            response_format={"type": "text"},
-        )
-        return rsp.choices[0].message.content
+            rsp = await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": content}],
+                response_format={"type": "text"},
+            )
+            return rsp.choices[0].message.content
 
     # ─────────────────────────────── I/O helpers
     async def _save_frame(self, frame, tag: str) -> str:

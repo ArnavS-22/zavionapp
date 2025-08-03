@@ -112,12 +112,21 @@ class gum:
         self.update_handlers: list[Callable[[Observer, Update], None]] = []
 
     async def _get_ai_client(self):
-        """Get the unified AI client, initializing it if needed."""
+        """Get the AI client, initializing it if needed."""
         if self.ai_client is None:
-            # Import here to avoid circular imports
-            from unified_ai_client import get_unified_client
-            self.ai_client = await get_unified_client()
-            self.logger.info("Unified AI client initialized for GUM")
+            # Check if batching is enabled
+            use_batched = os.getenv("USE_BATCHED_CLIENT", "false").lower() == "true"
+            
+            if use_batched:
+                # Import here to avoid circular imports
+                from batched_ai_client import get_batched_client
+                self.ai_client = await get_batched_client()
+                self.logger.info("Batched AI client initialized for GUM")
+            else:
+                # Import here to avoid circular imports
+                from unified_ai_client import get_unified_client
+                self.ai_client = await get_unified_client()
+                self.logger.info("Unified AI client initialized for GUM")
         return self.ai_client
 
     def _parse_ai_json_response(self, response_content: str, expected_key: str = None):
