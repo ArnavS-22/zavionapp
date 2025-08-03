@@ -21,7 +21,7 @@ class GUMApp {
         this.currentPropositionsPage = 1;
         
         // Tab management
-        this.activeTab = 'upload';
+        this.activeTab = 'home';
         // Theme management - handle migration from old theme key
         let theme = localStorage.getItem('gum-theme');
         if (!theme) {
@@ -203,10 +203,10 @@ class GUMApp {
         this.applyTheme();
         this.setupEventListeners();
         this.setupTabNavigation();
-        this.setupFileUpload();
-        this.setupProgressTracking();
+        this.setupDashboardTabNavigation();
         this.setupPropositionsListeners();
         this.setupQueryListeners();
+        this.setupTimelineListeners();
         await this.checkConnection();
         this.updateConnectionStatus();
         this.loadRecentHistory();
@@ -242,14 +242,7 @@ class GUMApp {
             themeToggle.addEventListener('click', () => this.toggleTheme());
         }
 
-        // Video form submission
-        const videoForm = document.getElementById('videoForm');
-        if (videoForm) {
-            videoForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                this.submitVideoAnalysis();
-            });
-        }
+
 
         // Action buttons
         const exportBtn = document.getElementById('exportBtn');
@@ -267,11 +260,7 @@ class GUMApp {
             refreshHistory.addEventListener('click', () => this.loadRecentHistory());
         }
 
-        // Remove file button
-        const removeFile = document.getElementById('removeFile');
-        if (removeFile) {
-            removeFile.addEventListener('click', () => this.removeSelectedFile());
-        }
+
 
         // Database cleanup button
         const cleanupDatabase = document.getElementById('cleanupDatabase');
@@ -283,10 +272,6 @@ class GUMApp {
         document.addEventListener('keydown', (e) => {
             if (e.ctrlKey || e.metaKey) {
                 switch (e.key) {
-                    case 'u':
-                        e.preventDefault();
-                        this.triggerFileUpload();
-                        break;
                     case 'n':
                         e.preventDefault();
                         this.startNewAnalysis();
@@ -295,334 +280,24 @@ class GUMApp {
             }
         });
 
-        // Progress bar on scroll
-        window.addEventListener('scroll', () => this.updateScrollProgress());
+
     }
 
-    /**
-     * Setup file upload functionality
-     */
-    setupFileUpload() {
-        const uploadZone = document.getElementById('uploadZone');
-        const fileInput = document.getElementById('videoFile');
-        const uploadBtn = document.getElementById('uploadBtn');
 
-        if (!uploadZone || !fileInput) return;
 
-        // Click to upload
-        uploadZone.addEventListener('click', () => {
-            fileInput.click();
-        });
 
-        // File selection
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                this.handleFileSelection(e.target.files[0]);
-            }
-        });
 
-        // Drag and drop
-        uploadZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadZone.classList.add('dragover');
-        });
 
-        uploadZone.addEventListener('dragleave', (e) => {
-            if (!uploadZone.contains(e.relatedTarget)) {
-                uploadZone.classList.remove('dragover');
-            }
-        });
 
-        uploadZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadZone.classList.remove('dragover');
-            
-            if (e.dataTransfer.files.length > 0) {
-                this.handleFileSelection(e.dataTransfer.files[0]);
-            }
-        });
-    }
 
-    /**
-     * Handle file selection and validation
-     */
-    handleFileSelection(file) {
-        // Validate file type
-        const allowedTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/quicktime'];
-        if (!allowedTypes.includes(file.type)) {
-            this.showToast('Please select a valid video file (MP4, AVI, MOV, WMV)', 'error');
-            return;
-        }
 
-        // Validate file size (max 500MB)
-        const maxSize = 500 * 1024 * 1024; // 500MB
-        if (file.size > maxSize) {
-            this.showToast('File size too large. Maximum size is 500MB.', 'error');
-            return;
-        }
 
-        this.selectedFile = file;
-        this.displayFilePreview(file);
-        this.enableUploadButton();
-    }
 
-    /**
-     * Display file preview
-     */
-    displayFilePreview(file) {
-        const uploadZoneContent = document.getElementById('uploadZoneContent');
-        const filePreview = document.getElementById('filePreview');
-        const fileName = document.getElementById('fileName');
-        const fileSize = document.getElementById('fileSize');
-        const fileDuration = document.getElementById('fileDuration');
-        const previewVideo = document.getElementById('previewVideo');
 
-        if (!uploadZoneContent || !filePreview) return;
 
-        // Hide upload zone, show preview
-        uploadZoneContent.style.display = 'none';
-        filePreview.style.display = 'block';
 
-        // Set file info
-        if (fileName) fileName.textContent = file.name;
-        if (fileSize) fileSize.textContent = this.formatFileSize(file.size);
 
-        // Create video URL and set duration
-        if (previewVideo) {
-            const videoUrl = URL.createObjectURL(file);
-            previewVideo.src = videoUrl;
-            
-            previewVideo.addEventListener('loadedmetadata', () => {
-                if (fileDuration) {
-                    fileDuration.textContent = this.formatDuration(previewVideo.duration);
-                }
-            });
-        }
-    }
 
-    /**
-     * Remove selected file
-     */
-    removeSelectedFile() {
-        this.selectedFile = null;
-        
-        const uploadZoneContent = document.getElementById('uploadZoneContent');
-        const filePreview = document.getElementById('filePreview');
-        const previewVideo = document.getElementById('previewVideo');
-        const fileInput = document.getElementById('videoFile');
-
-        if (uploadZoneContent) uploadZoneContent.style.display = 'block';
-        if (filePreview) filePreview.style.display = 'none';
-        if (previewVideo) {
-            URL.revokeObjectURL(previewVideo.src);
-            previewVideo.src = '';
-        }
-        if (fileInput) fileInput.value = '';
-
-        this.disableUploadButton();
-    }
-
-    /**
-     * Enable upload button
-     */
-    enableUploadButton() {
-        const uploadBtn = document.getElementById('uploadBtn');
-        if (uploadBtn) {
-            uploadBtn.disabled = false;
-        }
-    }
-
-    /**
-     * Disable upload button
-     */
-    disableUploadButton() {
-        const uploadBtn = document.getElementById('uploadBtn');
-        if (uploadBtn) {
-            uploadBtn.disabled = true;
-        }
-    }
-
-    /**
-     * Trigger file upload dialog
-     */
-    triggerFileUpload() {
-        const fileInput = document.getElementById('videoFile');
-        if (fileInput) {
-            fileInput.click();
-        }
-    }
-
-    /**
-     * Setup progress tracking
-     */
-    setupProgressTracking() {
-        this.progressSteps = [
-            { id: 'step1', name: 'Uploading' },
-            { id: 'step2', name: 'Processing' },
-            { id: 'step3', name: 'Analyzing' },
-            { id: 'step4', name: 'Complete' }
-        ];
-    }
-
-    /**
-     * Update progress step
-     */
-    updateProgressStep(stepNumber, progress = 0) {
-        this.currentStep = stepNumber;
-        
-        // Update progress bar
-        const progressFill = document.getElementById('uploadProgress');
-        if (progressFill) {
-            const totalProgress = ((stepNumber - 1) * 25) + (progress * 25 / 100);
-            progressFill.style.width = `${totalProgress}%`;
-        }
-
-        // Update progress text
-        const progressText = document.getElementById('progressText');
-        const progressPercent = document.getElementById('progressPercent');
-        
-        if (progressText && this.progressSteps[stepNumber - 1]) {
-            progressText.textContent = this.progressSteps[stepNumber - 1].name;
-        }
-        
-        if (progressPercent) {
-            const totalProgress = ((stepNumber - 1) * 25) + (progress * 25 / 100);
-            progressPercent.textContent = `${Math.round(totalProgress)}%`;
-        }
-
-        // Update step indicators
-        this.progressSteps.forEach((step, index) => {
-            const stepElement = document.getElementById(step.id);
-            if (stepElement) {
-                stepElement.classList.remove('active', 'completed');
-                
-                if (index + 1 < stepNumber) {
-                    stepElement.classList.add('completed');
-                } else if (index + 1 === stepNumber) {
-                    stepElement.classList.add('active');
-                }
-            }
-        });
-    }
-
-    /**
-     * Submit video for analysis
-     */
-    async submitVideoAnalysis() {
-        if (!this.selectedFile) {
-            this.showToast('Please select a video file first', 'error');
-            return;
-        }
-
-        if (this.connectionStatus !== 'connected') {
-            this.showToast('Cannot connect to analysis service. Please check connection.', 'error');
-            return;
-        }
-
-        // Get form data
-        const fps = document.getElementById('videoFps')?.value || 0.4;
-        const userName = document.getElementById('videoUserName')?.value.trim();
-        // Default analysis - send all analysis types
-        const analysisTypes = ['behavior', 'activity', 'workflow', 'productivity'];
-
-        // Show progress section
-        const progressSection = document.getElementById('progressSection');
-        if (progressSection) {
-            progressSection.style.display = 'block';
-            progressSection.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        // Disable form
-        this.disableForm();
-
-        try {
-            // Step 1: Upload
-            this.updateProgressStep(1, 0);
-            
-            const formData = new FormData();
-            formData.append('file', this.selectedFile);
-            formData.append('fps', fps);
-            if (userName) formData.append('user_name', userName);
-            formData.append('observer_name', 'web_interface');
-
-            // Create upload request with progress tracking
-            const response = await this.uploadWithProgress(formData);
-            
-            if (response.ok) {
-                const result = await response.json();
-                this.updateProgressStep(4, 100);
-                
-                // Show results
-                setTimeout(() => {
-                    this.displayResults(result);
-                    this.showToast('Video analysis completed successfully!', 'success');
-                }, 1000);
-                
-            } else {
-                const error = await response.json();
-                throw new Error(error.detail || 'Analysis failed');
-            }
-
-        } catch (error) {
-            this.showToast(`Analysis failed: ${error.message}`, 'error');
-            this.hideProgressSection();
-        } finally {
-            this.enableForm();
-        }
-    }
-
-    /**
-     * Upload with progress tracking
-     */
-    async uploadWithProgress(formData) {
-        return new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            
-            // Track upload progress
-            xhr.upload.addEventListener('progress', (e) => {
-                if (e.lengthComputable) {
-                    const progress = (e.loaded / e.total) * 100;
-                    this.updateProgressStep(1, progress);
-                }
-            });
-
-            // Handle state changes
-            xhr.addEventListener('readystatechange', () => {
-                if (xhr.readyState === XMLHttpRequest.DONE) {
-                    if (xhr.status === 200) {
-                        try {
-                            const result = JSON.parse(xhr.responseText);
-                            // Video uploaded successfully, now poll for processing status
-                            if (result.job_id) {
-                                this.updateProgressStep(2, 0);
-                                this.pollJobStatus(result.job_id)
-                                    .then((finalResult) => resolve({ ok: true, json: () => Promise.resolve(finalResult) }))
-                                    .catch(reject);
-                            } else {
-                                reject(new Error('No job ID received from server'));
-                            }
-                        } catch (e) {
-                            reject(new Error('Invalid response format'));
-                        }
-                    } else {
-                        try {
-                            const error = JSON.parse(xhr.responseText);
-                            reject(new Error(error.detail || `HTTP ${xhr.status}: ${xhr.statusText}`));
-                        } catch (e) {
-                            reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
-                        }
-                    }
-                }
-            });
-
-            xhr.addEventListener('error', () => {
-                reject(new Error('Network error during upload'));
-            });
-
-            xhr.open('POST', `${this.apiBaseUrl}/observations/video`);
-            xhr.send(formData);
-        });
-    }
 
     /**
      * Simulate processing progress for better UX
@@ -847,45 +522,14 @@ class GUMApp {
      * Export results
      */
     exportResults() {
-        if (!this.currentResults) {
-            this.showToast('No results to export', 'warning');
-            return;
-        }        const dataStr = JSON.stringify(this.currentResults, null, 2);
-        const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-        
-        const exportFileDefaultName = `gum-analysis-${new Date().toISOString().split('T')[0]}.json`;
-        
-        const linkElement = document.createElement('a');
-        linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', exportFileDefaultName);
-        linkElement.click();
-        
-        this.showToast('Results exported successfully', 'success');
+        this.showToast('Export functionality is not available without upload feature', 'warning');
     }
 
     /**
      * Start new analysis
      */
     startNewAnalysis() {
-        // Reset form
-        this.removeSelectedFile();
-        
-        // Hide results and progress
-        const resultsSection = document.getElementById('resultsSection');
-        const progressSection = document.getElementById('progressSection');
-        
-        if (resultsSection) resultsSection.style.display = 'none';
-        if (progressSection) progressSection.style.display = 'none';
-        
-        // Reset progress
-        this.currentStep = 1;
-        this.uploadProgress = 0;
-        this.currentResults = null;
-        
-        // Scroll to top
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        
-        this.showToast('Ready for new analysis', 'info');
+        this.showToast('Upload feature has been removed from this interface', 'info');
     }
 
     /**
@@ -1105,16 +749,7 @@ class GUMApp {
     /**
      * Update scroll progress
      */
-    updateScrollProgress() {
-        const scrollTop = document.documentElement.scrollTop;
-        const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-        const progress = (scrollTop / scrollHeight) * 100;
-        
-        const progressBar = document.getElementById('progressBar');
-        if (progressBar) {
-            progressBar.style.width = `${progress}%`;
-        }
-    }    /**
+    /**
      * Show toast notification
      */
     showToast(message, type = 'info') {
@@ -1488,6 +1123,50 @@ class GUMApp {
         });
     }
 
+    setupDashboardTabNavigation() {
+        const dashboardTabButtons = document.querySelectorAll('.dashboard-tab-button');
+        
+        dashboardTabButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const tabId = button.getAttribute('data-dashboard-tab');
+                this.switchDashboardTab(tabId);
+            });
+        });
+    }
+
+    switchDashboardTab(tabId) {
+        // Remove active class from all dashboard tabs and panels
+        document.querySelectorAll('.dashboard-tab-button').forEach(btn => {
+            btn.classList.remove('active');
+            btn.setAttribute('aria-selected', 'false');
+        });
+        
+        document.querySelectorAll('.dashboard-tab-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+
+        // Add active class to selected tab and panel
+        const activeButton = document.querySelector(`[data-dashboard-tab="${tabId}"]`);
+        const activePanel = document.getElementById(`${tabId}-panel`);
+
+        if (activeButton && activePanel) {
+            activeButton.classList.add('active');
+            activeButton.setAttribute('aria-selected', 'true');
+            activePanel.classList.add('active');
+
+            // Load content for specific dashboard tabs when activated
+            if (tabId === 'analysis') {
+                this.loadRecentHistory();
+            } else if (tabId === 'insights') {
+                // Insights will be loaded when user clicks "Load Insights"
+            } else if (tabId === 'timeline') {
+                // Timeline will be loaded when user clicks "Load Timeline"
+            } else if (tabId === 'query') {
+                this.focusQueryInput();
+            }
+        }
+    }
+
     /**
      * Switch to a specific tab
      */
@@ -1513,12 +1192,10 @@ class GUMApp {
             this.activeTab = tabId;
 
             // Load content for specific tabs when activated
-            if (tabId === 'analysis') {
+            if (tabId === 'home') {
+                // Home page - no special loading needed
+            } else if (tabId === 'dashboard') {
                 this.loadRecentHistory();
-            } else if (tabId === 'insights') {
-                // Insights will be loaded when user clicks "Load Insights"
-            } else if (tabId === 'query') {
-                this.focusQueryInput();
             }
         }
     }
@@ -1719,18 +1396,269 @@ class GUMApp {
      * Display query error state
      */
     displayQueryError(errorMessage) {
+        const resultsSection = document.getElementById('queryResultsSection');
         const resultsContainer = document.getElementById('queryResults');
-        if (!resultsContainer) return;
+        const loadingOverlay = document.getElementById('queryLoading');
 
-        resultsContainer.innerHTML = `
-            <div class="empty-state">
-                <i class="fas fa-exclamation-triangle" style="color: var(--error-color);"></i>
-                <h3>Query Error</h3>
-                <p>Failed to execute query: ${this.escapeHtml(errorMessage)}</p>
-                <p>Please check your connection and try again.</p>
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'none';
+        }
+
+        if (resultsContainer) {
+            resultsContainer.innerHTML = `
+                <div class="query-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <h3>Query Error</h3>
+                    <p>${this.escapeHtml(errorMessage)}</p>
+                </div>
+            `;
+        }
+
+        if (resultsSection) {
+            resultsSection.style.display = 'block';
+        }
+    }
+
+    // ===== TIMELINE FUNCTIONALITY =====
+
+    /**
+     * Setup timeline event listeners
+     */
+    setupTimelineListeners() {
+        const loadTimelineBtn = document.getElementById('loadTimeline');
+        const timelineDateInput = document.getElementById('timelineDate');
+        const timelineConfidenceFilter = document.getElementById('timelineConfidenceFilter');
+
+        if (loadTimelineBtn) {
+            loadTimelineBtn.addEventListener('click', () => this.loadTimeline());
+        }
+
+        if (timelineDateInput) {
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            timelineDateInput.value = today;
+        }
+
+        if (timelineConfidenceFilter) {
+            timelineConfidenceFilter.addEventListener('change', () => {
+                // Auto-reload timeline when filter changes
+                if (document.getElementById('timeline-panel').classList.contains('active')) {
+                    this.loadTimeline();
+                }
+            });
+        }
+    }
+
+    /**
+     * Load timeline data for the selected date
+     */
+    async loadTimeline() {
+        const loadBtn = document.getElementById('loadTimeline');
+        const contentContainer = document.getElementById('timelineContent');
+        const dateInput = document.getElementById('timelineDate');
+        const confidenceFilter = document.getElementById('timelineConfidenceFilter');
+
+        if (!contentContainer || !dateInput) return;
+
+        try {
+            // Show loading state
+            if (loadBtn) {
+                loadBtn.disabled = true;
+                loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+            }
+
+            // Get filter values
+            const date = dateInput.value;
+            const confidenceMin = confidenceFilter?.value || null;
+
+            // Build query parameters
+            const params = new URLSearchParams({
+                date: date
+            });
+
+            if (confidenceMin) {
+                params.append('confidence_min', confidenceMin);
+            }
+
+            // Fetch timeline data
+            const response = await fetch(`${this.apiBaseUrl}/propositions/by-hour?${params}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const timelineData = await response.json();
+
+            // Display results
+            this.displayTimeline(timelineData);
+
+            this.showToast(`Loaded timeline for ${date}`, 'success');
+
+        } catch (error) {
+            console.error('Error loading timeline:', error);
+            this.showToast(`Failed to load timeline: ${error.message}`, 'error');
+            this.displayEmptyTimeline();
+        } finally {
+            // Reset button state
+            if (loadBtn) {
+                loadBtn.disabled = false;
+                loadBtn.innerHTML = '<i class="fas fa-clock"></i> Load Timeline';
+            }
+        }
+    }
+
+    /**
+     * Display timeline data in the UI
+     */
+    displayTimeline(timelineData) {
+        const contentContainer = document.getElementById('timelineContent');
+
+        if (!contentContainer) return;
+
+        if (!timelineData.hourly_groups || timelineData.hourly_groups.length === 0) {
+            this.displayEmptyTimeline();
+            return;
+        }
+
+        // Format date for display
+        const displayDate = new Date(timelineData.date).toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        contentContainer.innerHTML = `
+            <div class="timeline-date-header">
+                <h3 class="timeline-date-title">
+                    <i class="fas fa-calendar"></i>
+                    ${displayDate}
+                </h3>
+                <div class="timeline-stats">
+                    <div class="timeline-stat">
+                        <i class="fas fa-clock"></i>
+                        <span>${timelineData.total_hours} hours</span>
+                    </div>
+                    <div class="timeline-stat">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>${timelineData.total_propositions} insights</span>
+                    </div>
+                </div>
+            </div>
+            <div class="timeline-hours">
+                ${timelineData.hourly_groups.map((hourGroup, index) => 
+                    this.createTimelineHourItem(hourGroup, index)
+                ).join('')}
+            </div>
+        `;
+
+        // Setup click handlers for hour items
+        this.setupTimelineHourHandlers();
+    }
+
+    /**
+     * Create a timeline hour item HTML
+     */
+    createTimelineHourItem(hourGroup, index) {
+        const hour = hourGroup.hour;
+        const hourDisplay = hourGroup.hour_display;
+        const count = hourGroup.proposition_count;
+        const propositions = hourGroup.propositions;
+
+        return `
+            <div class="timeline-hour-item" data-hour="${hour}" style="animation-delay: ${index * 0.1}s">
+                <div class="timeline-hour-left">
+                    <div class="timeline-hour-bullet"></div>
+                    <div class="timeline-hour-time">${hourDisplay}</div>
+                    <div class="timeline-hour-count">${count} insights</div>
+                </div>
+                <button class="timeline-hour-button" data-hour="${hour}">
+                    Click Insights
+                </button>
+                <div class="timeline-hour-details" id="timeline-hour-${hour}">
+                    <div class="timeline-propositions">
+                        <strong>Individual Insights:</strong>
+                        ${propositions.map(prop => `
+                            <div class="timeline-proposition">
+                                <strong>#${prop.id}</strong> (Confidence: ${prop.confidence || 'N/A'}) - ${this.escapeHtml(prop.text)}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
             </div>
         `;
     }
+
+    /**
+     * Setup click handlers for timeline hour items
+     */
+    setupTimelineHourHandlers() {
+        const hourItems = document.querySelectorAll('.timeline-hour-item');
+        const hourButtons = document.querySelectorAll('.timeline-hour-button');
+
+        hourItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                // Don't trigger if clicking on the button
+                if (e.target.classList.contains('timeline-hour-button')) {
+                    return;
+                }
+                
+                const hour = item.getAttribute('data-hour');
+                this.toggleTimelineHourDetails(hour);
+            });
+        });
+
+        hourButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent item click
+                const hour = button.getAttribute('data-hour');
+                this.toggleTimelineHourDetails(hour);
+            });
+        });
+    }
+
+    /**
+     * Toggle timeline hour details visibility
+     */
+    toggleTimelineHourDetails(hour) {
+        const detailsElement = document.getElementById(`timeline-hour-${hour}`);
+        const button = document.querySelector(`[data-hour="${hour}"].timeline-hour-button`);
+        
+        if (!detailsElement) return;
+
+        const isVisible = detailsElement.classList.contains('show');
+        
+        if (isVisible) {
+            detailsElement.classList.remove('show');
+            if (button) {
+                button.textContent = 'Click Insights';
+            }
+        } else {
+            detailsElement.classList.add('show');
+            if (button) {
+                button.textContent = 'Hide Insights';
+            }
+        }
+    }
+
+    /**
+     * Display empty timeline state
+     */
+    displayEmptyTimeline() {
+        const contentContainer = document.getElementById('timelineContent');
+        
+        if (!contentContainer) return;
+
+        contentContainer.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-clock" aria-hidden="true"></i>
+                <h3>No timeline data</h3>
+                <p>No insights found for the selected date. Try a different date or check if you have any observations recorded.</p>
+            </div>
+        `;
+    }
+
+
 }
 
 // Initialize application when DOM is loaded

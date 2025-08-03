@@ -1135,6 +1135,115 @@ async def get_propositions_count(
         )
 
 
+@app.get("/propositions/by-hour", response_model=dict)
+async def get_propositions_by_hour(
+    user_name: Optional[str] = None,
+    date: Optional[str] = None,
+    confidence_min: Optional[int] = None
+):
+    """Get propositions grouped by hour for the specified date."""
+    try:
+        from datetime import datetime, timezone
+        
+        # Parse date parameter or use today
+        if date:
+            try:
+                target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid date format. Use YYYY-MM-DD"
+                )
+        else:
+            target_date = datetime.now().date()
+        
+        logger.info(f"Getting propositions by hour for date: {target_date}, confidence_min={confidence_min}")
+        
+        # Get GUM instance
+        gum_inst = await ensure_gum_instance(user_name)
+        
+        # Query propositions grouped by hour
+        async with gum_inst._session() as session:
+            from gum.models import Proposition
+            from sqlalchemy import select, func, extract, and_
+            
+            # Get current time to filter out future hours
+            now = datetime.now(timezone.utc)
+            
+            # Build base query for the target date
+            stmt = select(Proposition).where(
+                and_(
+                    func.date(Proposition.created_at) == target_date,
+                    Proposition.created_at <= now  # Only past hours
+                )
+            )
+            
+            # Apply confidence filter if specified
+            if confidence_min is not None:
+                stmt = stmt.where(Proposition.confidence >= confidence_min)
+            
+            # Order by creation time
+            stmt = stmt.order_by(Proposition.created_at)
+            
+            result = await session.execute(stmt)
+            propositions = result.scalars().all()
+            
+            # Group propositions by hour
+            hourly_groups = {}
+            for prop in propositions:
+                # Extract hour from created_at
+                hour = prop.created_at.hour
+                if hour not in hourly_groups:
+                    hourly_groups[hour] = []
+                hourly_groups[hour].append(prop)
+            
+            # Format data for response
+            hourly_data = []
+            for hour in sorted(hourly_groups.keys()):
+                hour_props = hourly_groups[hour]
+                
+                # Format hour display (12 AM, 1 AM, etc.)
+                if hour == 0:
+                    hour_display = "12 a.m."
+                elif hour < 12:
+                    hour_display = f"{hour} a.m."
+                elif hour == 12:
+                    hour_display = "12 p.m."
+                else:
+                    hour_display = f"{hour - 12} p.m."
+                
+                hourly_data.append({
+                    "hour": hour,
+                    "hour_display": hour_display,
+                    "proposition_count": len(hour_props),
+                    "propositions": [
+                        {
+                            "id": prop.id,
+                            "text": prop.text,
+                            "confidence": prop.confidence,
+                            "created_at": parse_datetime(prop.created_at)
+                        }
+                        for prop in hour_props
+                    ]
+                })
+            
+            logger.info(f"Retrieved {len(hourly_data)} hourly groups for {target_date}")
+            return {
+                "date": target_date.isoformat(),
+                "hourly_groups": hourly_data,
+                "total_hours": len(hourly_data),
+                "total_propositions": sum(len(group["propositions"]) for group in hourly_data)
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting propositions by hour: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting propositions by hour: {str(e)}"
+        )
+
 
 async def generate_video_insights(frame_analyses: List[str], filename: str, user_name: str = None) -> dict:
     """
