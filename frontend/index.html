@@ -111,6 +111,10 @@
                                 <i class="fas fa-comments"></i>
                                 <span>AI Assistant</span>
                             </button>
+                            <button class="dashboard-tab-button" id="narrativeTimelineTab" data-dashboard-tab="narrative-timeline" role="tab" aria-selected="false" aria-controls="narrative-timeline-panel">
+                                <i class="fas fa-list-alt"></i>
+                                <span>Narrative Timeline</span>
+                            </button>
                         </nav>
                     </div>
                 </section>
@@ -399,6 +403,39 @@
                                         <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('What apps do I use most?')">What apps do I use most?</div>
                                         <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('How can I optimize my workflow?')">How can I optimize my workflow?</div>
                                         <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('Show me my recent patterns')">Show me my recent patterns</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Narrative Timeline Tab -->
+                    <div class="dashboard-tab-panel" id="narrative-timeline-panel" role="tabpanel" aria-labelledby="narrativeTimelineTab">
+                        <div class="panel-card">
+                            <div class="card-header">
+                                <h2>
+                                    <i class="fas fa-list-alt"></i>
+                                    Narrative Timeline
+                                </h2>
+                                <p>View your raw activities and observations organized by time - see what you actually did each hour</p>
+                                <div class="header-actions">
+                                    <div class="filter-group">
+                                        <label for="narrativeTimelineDate">Date:</label>
+                                        <input type="date" id="narrativeTimelineDate" class="date-input">
+                                    </div>
+                                    <button class="btn-secondary" id="loadNarrativeTimeline">
+                                        <i class="fas fa-list-alt" aria-hidden="true"></i>
+                                        Load Timeline
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="narrative-timeline-section">
+                                <div class="narrative-timeline-content" id="narrativeTimelineContent">
+                                    <div class="empty-state">
+                                        <i class="fas fa-list-alt" aria-hidden="true"></i>
+                                        <h3>No narrative timeline data</h3>
+                                        <p>Select a date and click "Load Timeline" to view your raw activities</p>
                                     </div>
                                 </div>
                             </div>

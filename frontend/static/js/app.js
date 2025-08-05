@@ -207,6 +207,7 @@ class GUMApp {
         this.setupPropositionsListeners();
         this.setupQueryListeners();
         this.setupTimelineListeners();
+        this.setupNarrativeTimelineListeners();
         await this.checkConnection();
         this.updateConnectionStatus();
         this.loadRecentHistory();
@@ -991,7 +992,7 @@ class GUMApp {
         
         const createdDate = new Date(proposition.created_at);
         const formattedDate = createdDate.toLocaleDateString() + ' ' + 
-                            createdDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                            this.formatLocalTime(proposition.created_at);
 
         return `
             <div class="proposition-card" style="animation-delay: ${index * 0.1}s">
@@ -1354,7 +1355,7 @@ class GUMApp {
         const resultsHtml = result.propositions.map((prop, index) => {
             const createdDate = new Date(prop.created_at);
             const formattedDate = createdDate.toLocaleDateString() + ' ' + 
-                                createdDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                                this.formatLocalTime(prop.created_at);
             
             const confidence = prop.confidence;
             const confidenceClass = this.getConfidenceClass(confidence);
@@ -1654,6 +1655,525 @@ class GUMApp {
                 <i class="fas fa-clock" aria-hidden="true"></i>
                 <h3>No timeline data</h3>
                 <p>No insights found for the selected date. Try a different date or check if you have any observations recorded.</p>
+            </div>
+        `;
+    }
+
+    /**
+     * Setup narrative timeline event listeners
+     */
+    setupNarrativeTimelineListeners() {
+        const loadBtn = document.getElementById('loadNarrativeTimeline');
+        const dateInput = document.getElementById('narrativeTimelineDate');
+
+        if (loadBtn) {
+            loadBtn.addEventListener('click', () => this.loadNarrativeTimeline());
+        }
+
+        if (dateInput) {
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            dateInput.value = today;
+            
+            // Load timeline on date change
+            dateInput.addEventListener('change', () => this.loadNarrativeTimeline());
+        }
+    }
+
+    /**
+     * Load narrative timeline data
+     */
+    async loadNarrativeTimeline() {
+        const loadBtn = document.getElementById('loadNarrativeTimeline');
+        const contentContainer = document.getElementById('narrativeTimelineContent');
+        const dateInput = document.getElementById('narrativeTimelineDate');
+
+        if (!contentContainer || !dateInput) return;
+
+        try {
+            // Show loading state
+            if (loadBtn) {
+                loadBtn.disabled = true;
+                loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+            }
+
+            // Get date value
+            const date = dateInput.value;
+
+            // Fetch narrative timeline data
+            const response = await fetch(`${this.apiBaseUrl}/observations/by-hour?date=${date}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const timelineData = await response.json();
+
+            // Display results
+            this.displayNarrativeTimeline(timelineData);
+
+            this.showToast(`Loaded narrative timeline for ${date}`, 'success');
+
+        } catch (error) {
+            console.error('Error loading narrative timeline:', error);
+            this.showToast(`Failed to load narrative timeline: ${error.message}`, 'error');
+            this.displayEmptyNarrativeTimeline();
+        } finally {
+            // Reset button state
+            if (loadBtn) {
+                loadBtn.disabled = false;
+                loadBtn.innerHTML = '<i class="fas fa-list-alt"></i> Load Timeline';
+            }
+        }
+    }
+
+    /**
+     * Display narrative timeline data in the UI
+     */
+    displayNarrativeTimeline(timelineData) {
+        const contentContainer = document.getElementById('narrativeTimelineContent');
+
+        if (!contentContainer) return;
+
+        if (!timelineData.hourly_groups || timelineData.hourly_groups.length === 0) {
+            this.displayEmptyNarrativeTimeline();
+            return;
+        }
+
+        // Format date for display
+        const displayDate = new Date(timelineData.date).toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        contentContainer.innerHTML = `
+            <div class="narrative-timeline-date-header">
+                <h3 class="narrative-timeline-date-title">
+                    <i class="fas fa-calendar"></i>
+                    ${displayDate}
+                </h3>
+                <div class="narrative-timeline-stats">
+                    <div class="narrative-timeline-stat">
+                        <i class="fas fa-clock"></i>
+                        <span>${timelineData.total_hours} hours</span>
+                    </div>
+                    <div class="narrative-timeline-stat">
+                        <i class="fas fa-list-alt"></i>
+                        <span>${timelineData.total_observations} activities</span>
+                    </div>
+                    <div class="narrative-timeline-stat">
+                        <i class="fas fa-globe"></i>
+                        <span>${this.getCurrentTimezone()}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="narrative-timeline-hours">
+                ${timelineData.hourly_groups.map((hourGroup, index) => 
+                    this.createNarrativeTimelineHourItem(hourGroup, index)
+                ).join('')}
+            </div>
+        `;
+
+        // Setup click handlers for expandable hours
+        this.setupNarrativeTimelineHourHandlers();
+    }
+
+    /**
+     * Clean up raw transcription data for better readability
+     */
+    cleanTranscriptionData(content) {
+        if (!content) return '';
+
+        // Extract the most meaningful information only
+        let meaningfulInfo = [];
+
+        // Look for application usage
+        const appMatch = content.match(/Application:\s*([^\n]+)/i);
+        if (appMatch) {
+            meaningfulInfo.push(`Using ${appMatch[1].trim()}`);
+        }
+
+        // Look for window titles
+        const titleMatch = content.match(/Window Title:\s*([^\n]+)/i);
+        if (titleMatch) {
+            meaningfulInfo.push(`Viewing: ${titleMatch[1].trim()}`);
+        }
+
+        // Look for URLs
+        const urlMatch = content.match(/URL:\s*([^\n]+)/i);
+        if (urlMatch) {
+            const url = urlMatch[1].trim();
+            // Simplify URLs
+            if (url.includes('localhost')) {
+                meaningfulInfo.push('Using local development server');
+            } else if (url.includes('ycombinator.com')) {
+                meaningfulInfo.push('Working on Y Combinator application');
+            } else if (url.includes('linkedin.com')) {
+                meaningfulInfo.push('Browsing LinkedIn');
+            } else {
+                meaningfulInfo.push(`Browsing: ${url.split('/')[2] || url}`);
+            }
+        }
+
+        // Look for specific content patterns
+        if (content.includes('VS Code') || content.includes('Visual Studio Code')) {
+            meaningfulInfo.push('Coding in VS Code');
+        }
+        
+        if (content.includes('README.md')) {
+            meaningfulInfo.push('Reading documentation');
+        }
+        
+        if (content.includes('Y Combinator')) {
+            meaningfulInfo.push('Working on Y Combinator application');
+        }
+        
+        if (content.includes('LinkedIn')) {
+            meaningfulInfo.push('Using LinkedIn');
+        }
+        
+        if (content.includes('Dashboard')) {
+            meaningfulInfo.push('Viewing dashboard');
+        }
+        
+        if (content.includes('Timeline View')) {
+            meaningfulInfo.push('Checking timeline insights');
+        }
+
+        // Look for terminal/command line activity
+        if (content.includes('python -m gum.cli') || content.includes('start_gum.py')) {
+            meaningfulInfo.push('Running GUM application');
+        }
+
+        // Look for file/folder activity
+        if (content.includes('File Explorer') || content.includes('Folder Structure')) {
+            meaningfulInfo.push('Managing files');
+        }
+
+        // Look for weather/time info (user context)
+        const weatherMatch = content.match(/(\d+°F\s+\w+)/);
+        if (weatherMatch) {
+            meaningfulInfo.push(`Weather: ${weatherMatch[1]}`);
+        }
+
+        // If we found meaningful information, return it
+        if (meaningfulInfo.length > 0) {
+            return meaningfulInfo.join(' • ');
+        }
+
+        // Fallback: try to extract any readable content
+        const lines = content.split('\n').filter(line => {
+            const trimmed = line.trim();
+            return trimmed.length > 0 && 
+                   !trimmed.match(/^[-•\s]*$/) &&
+                   !trimmed.match(/^[A-Z][a-z]+:\s*$/) &&
+                   !trimmed.match(/^\d{2}:\d{2}:\d{2}/) &&
+                   !trimmed.match(/^PS C:/) &&
+                   !trimmed.match(/^INFO:/) &&
+                   !trimmed.match(/^DEBUG:/) &&
+                   !trimmed.match(/^WARNING:/) &&
+                   !trimmed.match(/^ERROR:/) &&
+                   !trimmed.match(/^```/) &&
+                   !trimmed.match(/^###/) &&
+                   !trimmed.match(/^File Paths?:/) &&
+                   !trimmed.match(/^Folder Structure:/) &&
+                   !trimmed.match(/^Sidebar Content:/) &&
+                   !trimmed.match(/^Terminal:/) &&
+                   !trimmed.match(/^Timestamp:/) &&
+                   !trimmed.match(/^Date:/) &&
+                   !trimmed.match(/^Weather:/) &&
+                   !trimmed.match(/^Taskbar/) &&
+                   !trimmed.match(/^Desktop Background:/) &&
+                   !trimmed.match(/^Visible Folders:/) &&
+                   !trimmed.match(/^Files and Folders:/) &&
+                   !trimmed.match(/^Other Text in Terminal:/) &&
+                   !trimmed.match(/^Right Sidebar Text:/) &&
+                   !trimmed.match(/^Navigation:/) &&
+                   !trimmed.match(/^Call to action:/) &&
+                   !trimmed.match(/^Button:/) &&
+                   !trimmed.match(/^Ad:/) &&
+                   !trimmed.match(/^Promotion:/) &&
+                   !trimmed.match(/^Followers:/) &&
+                   !trimmed.match(/^Comments:/) &&
+                   !trimmed.match(/^Reposts:/) &&
+                   !trimmed.match(/^Activity:/) &&
+                   !trimmed.match(/^Description:/) &&
+                   !trimmed.match(/^Accomplishments/) &&
+                   !trimmed.match(/^Please tell us/) &&
+                   !trimmed.match(/^Tell us about/) &&
+                   !trimmed.match(/^List any/) &&
+                   !trimmed.match(/^You're being asked/) &&
+                   !trimmed.match(/^My gym allowed/) &&
+                   !trimmed.match(/^This loophole/) &&
+                   !trimmed.match(/^FoundersCard/) &&
+                   !trimmed.match(/^CEO Founders/) &&
+                   !trimmed.match(/^Entrepreneurs/) &&
+                   !trimmed.match(/^Claim your/) &&
+                   !trimmed.match(/^Try for \$/) &&
+                   !trimmed.match(/^See who's viewed/) &&
+                   !trimmed.match(/^unlock your full/) &&
+                   !trimmed.match(/^Post a job/) &&
+                   !trimmed.match(/^For Business/) &&
+                   !trimmed.match(/^Home - My Network/) &&
+                   !trimmed.match(/^Jobs - Messaging/) &&
+                   !trimmed.match(/^Notifications/) &&
+                   !trimmed.match(/^LinkedIn Premium/) &&
+                   !trimmed.match(/^Rishab Siddamshetty/) &&
+                   !trimmed.match(/^114,572 followers/) &&
+                   !trimmed.match(/^43 comments/) &&
+                   !trimmed.match(/^10 reposts/) &&
+                   !trimmed.match(/^313 others/) &&
+                   !trimmed.match(/^General User Models/) &&
+                   !trimmed.match(/^GUM takes as input/) &&
+                   !trimmed.match(/^GUMs introduce an architecture/) &&
+                   !trimmed.match(/^python start_gum.py/) &&
+                   !trimmed.match(/^Listening to Arnav Sharma/) &&
+                   !trimmed.match(/^Screen observer started/) &&
+                   !trimmed.match(/^guarding 0/) &&
+                   !trimmed.match(/^model gpt-40-mini/) &&
+                   !trimmed.match(/^model gpt-4o-mini/) &&
+                   !trimmed.match(/^C:\\Users\\arnav/) &&
+                   !trimmed.match(/^C:\\Users\\ArnavDev/) &&
+                   !trimmed.match(/^C:\\Users\\ArnavOneDrive/) &&
+                   !trimmed.match(/^OneDrive\\Desktop/) &&
+                   !trimmed.match(/^Desktop\\gum/) &&
+                   !trimmed.match(/^__pycache__/) &&
+                   !trimmed.match(/^__init__.py/) &&
+                   !trimmed.match(/^models.py/) &&
+                   !trimmed.match(/^schemas.py/) &&
+                   !trimmed.match(/^start_gum.py/) &&
+                   !trimmed.match(/^screen.py/) &&
+                   !trimmed.match(/^util.py/) &&
+                   !trimmed.match(/^rights.py/) &&
+                   !trimmed.match(/^unified_ai_client.py/) &&
+                   !trimmed.match(/^test.gum.py/) &&
+                   !trimmed.match(/^setup.py/) &&
+                   !trimmed.match(/^sklpyt.tpm/) &&
+                   !trimmed.match(/^LICENSE/) &&
+                   !trimmed.match(/^README.md/) &&
+                   !trimmed.match(/^observer.py/) &&
+                   !trimmed.match(/^gump/) &&
+                   !trimmed.match(/^landingpage/) &&
+                   !trimmed.match(/^PERSONAL SITE/) &&
+                   !trimmed.match(/^zavion/) &&
+                   !trimmed.match(/^Personal Site 2/) &&
+                   !trimmed.match(/^gum2/) &&
+                   !trimmed.match(/^build/) &&
+                   !trimmed.match(/^nobs/) &&
+                   !trimmed.match(/^RealDeal/) &&
+                   !trimmed.match(/^frick/) &&
+                   !trimmed.match(/^arnav_shar/) &&
+                   !trimmed.match(/^sigh/) &&
+                   !trimmed.match(/^final/) &&
+                   !trimmed.match(/^Problems/) &&
+                   !trimmed.match(/^Output/) &&
+                   !trimmed.match(/^Debug Console/) &&
+                   !trimmed.match(/^Terminal/) &&
+                   !trimmed.match(/^agood -20/) &&
+                   !trimmed.match(/^head -20/) &&
+                   !trimmed.match(/^Search/) &&
+                   !trimmed.match(/^Edge/) &&
+                   !trimmed.match(/^Various icons/) &&
+                   !trimmed.match(/^not identified textually/) &&
+                   !trimmed.match(/^1:33 PM/) &&
+                   !trimmed.match(/^8/4/2025/) &&
+                   !trimmed.match(/^75°F/) &&
+                   !trimmed.match(/^Sunny/) &&
+                   !trimmed.match(/^Chrome/) &&
+                   !trimmed.match(/^visible in taskbar/) &&
+                   !trimmed.match(/^Min Confidence/) &&
+                   !trimmed.match(/^Loading/) &&
+                   !trimmed.match(/^Click Insights/) &&
+                   !trimmed.match(/^18 insights/) &&
+                   !trimmed.match(/^1 hour/) &&
+                   !trimmed.match(/^localhost:3000/) &&
+                   !trimmed.match(/^apply.ycombinator.com/) &&
+                   !trimmed.match(/^bio/edit/) &&
+                   !trimmed.match(/^Confidence: \d+/) &&
+                   !trimmed.match(/^#\d+/) &&
+                   !trimmed.match(/^Arnav Sharma is/) &&
+                   !trimmed.match(/^actively developing/) &&
+                   !trimmed.match(/^interested in user modeling/) &&
+                   !trimmed.match(/^using or testing/) &&
+                   !trimmed.match(/^utilizing GPT-40/) &&
+                   !trimmed.match(/^prioritizes development/) &&
+                   !trimmed.match(/^likely working on/) &&
+                   !trimmed.match(/^may not be actively/) &&
+                   !trimmed.match(/^not currently prioritizing/) &&
+                   !trimmed.match(/^strategic mindset/) &&
+                   !trimmed.match(/^adept at finding loopholes/) &&
+                   !trimmed.match(/^using the Observational/) &&
+                   !trimmed.match(/^prioritizes documenting/) &&
+                   !trimmed.match(/^Feed \| LinkedIn/) &&
+                   !trimmed.match(/^Rishab Siddamshetty and/) &&
+                   !trimmed.match(/^FoundersCard/) &&
+                   !trimmed.match(/^CEO Founders/) &&
+                   !trimmed.match(/^Entrepreneurs/) &&
+                   !trimmed.match(/^Claim your Membership/) &&
+                   !trimmed.match(/^lnkd.in/) &&
+                   !trimmed.match(/^My Network/) &&
+                   !trimmed.match(/^Jobs - Messaging/) &&
+                   !trimmed.match(/^Notifications/) &&
+                   !trimmed.match(/^For Business/) &&
+                   !trimmed.match(/^Post a job/) &&
+                   !trimmed.match(/^LinkedIn Premium/) &&
+                   !trimmed.match(/^unlock your full potential/) &&
+                   !trimmed.match(/^See who's viewed/) &&
+                   !trimmed.match(/^Try for \$0/) &&
+                   !trimmed.match(/^365 days/);
+        });
+
+        // Join and clean up
+        const cleaned = lines.join(' ').trim();
+
+        // If we have some readable content, return it (truncated)
+        if (cleaned.length > 0) {
+            return cleaned.length > 100 ? cleaned.substring(0, 100) + '...' : cleaned;
+        }
+
+        // Final fallback
+        return 'Screen activity recorded';
+    }
+
+    /**
+     * Create HTML for a narrative timeline hour item
+     */
+    createNarrativeTimelineHourItem(hourGroup, index) {
+        const hour = hourGroup.hour_display;
+        const observationCount = hourGroup.observation_count;
+        const observations = hourGroup.observations;
+
+        return `
+            <div class="narrative-timeline-hour-item" data-hour="${hourGroup.hour}">
+                <div class="narrative-timeline-hour-header" onclick="window.gumApp?.toggleNarrativeTimelineHourDetails(${hourGroup.hour})">
+                    <div class="narrative-timeline-hour-info">
+                        <h4 class="narrative-timeline-hour-title">
+                            <i class="fas fa-clock"></i>
+                            ${hour}
+                        </h4>
+                        <span class="narrative-timeline-hour-count">${observationCount} activities</span>
+                    </div>
+                    <div class="narrative-timeline-hour-toggle">
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                </div>
+                <div class="narrative-timeline-hour-details" id="narrative-timeline-hour-${hourGroup.hour}">
+                    <div class="narrative-timeline-observations">
+                        ${observations.map((obs, obsIndex) => `
+                            <div class="narrative-timeline-observation">
+                                <div class="narrative-timeline-observation-content">
+                                    <p>${this.escapeHtml(this.cleanTranscriptionData(obs.content))}</p>
+                                </div>
+                                <div class="narrative-timeline-observation-meta">
+                                    <span class="narrative-timeline-observation-time">
+                                        ${this.formatLocalTime(obs.created_at)}
+                                    </span>
+                                    <span class="narrative-timeline-observation-type">
+                                        ${obs.content_type}
+                                    </span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Setup click handlers for narrative timeline hour items
+     */
+    setupNarrativeTimelineHourHandlers() {
+        const hourItems = document.querySelectorAll('.narrative-timeline-hour-item');
+        
+        hourItems.forEach(item => {
+            const hour = item.dataset.hour;
+            const details = document.getElementById(`narrative-timeline-hour-${hour}`);
+            const toggle = item.querySelector('.narrative-timeline-hour-toggle i');
+            
+            if (details && toggle) {
+                // Initially hide details
+                details.style.display = 'none';
+                toggle.classList.remove('fa-chevron-up');
+                toggle.classList.add('fa-chevron-down');
+            }
+        });
+    }
+
+    /**
+     * Toggle narrative timeline hour details visibility
+     */
+    toggleNarrativeTimelineHourDetails(hour) {
+        const details = document.getElementById(`narrative-timeline-hour-${hour}`);
+        const toggle = document.querySelector(`[data-hour="${hour}"] .narrative-timeline-hour-toggle i`);
+        
+        if (details && toggle) {
+            const isVisible = details.style.display !== 'none';
+            
+            if (isVisible) {
+                details.style.display = 'none';
+                toggle.classList.remove('fa-chevron-up');
+                toggle.classList.add('fa-chevron-down');
+            } else {
+                details.style.display = 'block';
+                toggle.classList.remove('fa-chevron-down');
+                toggle.classList.add('fa-chevron-up');
+            }
+        }
+    }
+
+    /**
+     * Format datetime to local timezone
+     */
+    formatLocalTime(dateString) {
+        try {
+            // Parse the UTC date string and convert to local time
+            const date = new Date(dateString);
+            
+            // Check if the date is valid
+            if (isNaN(date.getTime())) {
+                return 'Invalid time';
+            }
+            
+            // Format in local timezone
+            return date.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZoneName: 'short' // This will show the timezone
+            });
+        } catch (error) {
+            console.error('Error formatting time:', error);
+            return 'Time error';
+        }
+    }
+
+    /**
+     * Get current timezone name
+     */
+    getCurrentTimezone() {
+        try {
+            return Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch (error) {
+            return 'Local Time';
+        }
+    }
+
+    /**
+     * Display empty narrative timeline state
+     */
+    displayEmptyNarrativeTimeline() {
+        const contentContainer = document.getElementById('narrativeTimelineContent');
+        
+        if (!contentContainer) return;
+
+        contentContainer.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-list-alt" aria-hidden="true"></i>
+                <h3>No narrative timeline data</h3>
+                <p>No raw observations found for the selected date. Try a different date or check if you have any observations recorded.</p>
             </div>
         `;
     }
