@@ -1,13 +1,13 @@
 /**
- * GUM (General User Models) - Frontend Application
+ * Zavion - Frontend Application
  * Modern JavaScript application for video analysis and user behavior insights
  */
 
-class GUMApp {
+class ZavionApp {
     constructor() {
         // Use configuration from injected global variable or fallback to default
-        this.apiBaseUrl = window.GUM_CONFIG?.apiBaseUrl || 'http://localhost:8001';
-        console.log('GUM Frontend initialized with API base URL:', this.apiBaseUrl);
+        this.apiBaseUrl = window.ZAVION_CONFIG?.apiBaseUrl || 'http://localhost:8001';
+        console.log('Zavion Frontend initialized with API base URL:', this.apiBaseUrl);
         
         this.connectionStatus = 'connecting';
         this.uploadProgress = 0;
@@ -61,7 +61,7 @@ class GUMApp {
             return response;
         } catch (error) {
             if (error.message !== 'Rate limited') {
-                this.showToast('❌ Connection error. Make sure GUM is running.', 'error');
+                this.showToast('❌ Connection error. Make sure Zavion is running.', 'error');
             }
             throw error;
         }
@@ -205,12 +205,10 @@ class GUMApp {
         this.setupTabNavigation();
         this.setupDashboardTabNavigation();
         this.setupPropositionsListeners();
-        this.setupQueryListeners();
         this.setupTimelineListeners();
         this.setupNarrativeTimelineListeners();
         await this.checkConnection();
         this.updateConnectionStatus();
-        this.loadRecentHistory();
     }
 
     /**
@@ -256,10 +254,7 @@ class GUMApp {
             newAnalysisBtn.addEventListener('click', () => this.startNewAnalysis());
         }
 
-        const refreshHistory = document.getElementById('refreshHistory');
-        if (refreshHistory) {
-            refreshHistory.addEventListener('click', () => this.loadRecentHistory());
-        }
+
 
 
 
@@ -645,56 +640,7 @@ class GUMApp {
         }
     }
 
-    /**
-     * Load recent analysis history
-     */
-    async loadRecentHistory() {
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/observations?limit=5`);
-            if (response.ok) {
-                const history = await response.json();
-                this.displayHistory(history || []);
-            }
-        } catch (error) {
-            console.warn('Could not load history:', error.message);
-        }
-    }
 
-    /**
-     * Display history
-     */
-    displayHistory(historyItems) {
-        const historyContent = document.getElementById('historyContent');
-        if (!historyContent) return;
-
-        if (!historyItems.length) {
-            historyContent.innerHTML = '<p class="no-data">No recent analyses found</p>';
-            return;
-        }
-
-        const historyHtml = historyItems.map(item => `
-            <div class="history-item">
-                <div class="history-header">
-                    <div class="history-title">
-                        <i class="fas fa-${item.content_type === 'video' ? 'video' : 'file-alt'}"></i>
-                        ${item.content_type === 'video' ? 'Video Analysis' : 'Text Analysis'}
-                    </div>
-                    <div class="history-date">
-                        ${new Date(item.created_at).toLocaleDateString()}
-                    </div>
-                </div>
-                <div class="history-details">
-                    <span>Observer: ${item.observer_name || 'Unknown'}</span>
-                    <span>Type: ${item.content_type}</span>
-                </div>
-                <div class="history-content">
-                    ${item.content}
-                </div>
-            </div>
-        `).join('');
-
-        historyContent.innerHTML = historyHtml;
-    }
 
     /**
      * Check API connection
@@ -1156,14 +1102,10 @@ class GUMApp {
             activePanel.classList.add('active');
 
             // Load content for specific dashboard tabs when activated
-            if (tabId === 'analysis') {
-                this.loadRecentHistory();
-            } else if (tabId === 'insights') {
+            if (tabId === 'insights') {
                 // Insights will be loaded when user clicks "Load Insights"
             } else if (tabId === 'timeline') {
                 // Timeline will be loaded when user clicks "Load Timeline"
-            } else if (tabId === 'query') {
-                this.focusQueryInput();
             }
         }
     }
@@ -1196,229 +1138,12 @@ class GUMApp {
             if (tabId === 'home') {
                 // Home page - no special loading needed
             } else if (tabId === 'dashboard') {
-                this.loadRecentHistory();
+        
             }
         }
     }
 
-    /**
-     * Focus the query input when query tab is activated
-     */
-    focusQueryInput() {
-        const queryInput = document.getElementById('queryInput');
-        if (queryInput) {
-            setTimeout(() => queryInput.focus(), 100);
-        }
-    }
 
-    // ===== QUERY FUNCTIONALITY =====
-
-    /**
-     * Setup query event listeners
-     */
-    setupQueryListeners() {
-        const queryInput = document.getElementById('queryInput');
-        const querySearchBtn = document.getElementById('querySearchBtn');
-        const exampleQueries = document.querySelectorAll('.example-query');
-
-        if (queryInput) {
-            queryInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    this.executeQuery();
-                }
-            });
-        }
-
-        if (querySearchBtn) {
-            querySearchBtn.addEventListener('click', () => {
-                this.executeQuery();
-            });
-        }
-
-        exampleQueries.forEach(button => {
-            button.addEventListener('click', () => {
-                const query = button.getAttribute('data-query');
-                if (queryInput) {
-                    queryInput.value = query;
-                    this.executeQuery();
-                }
-            });
-        });
-    }
-
-    /**
-     * Execute a query against the insights
-     */
-    async executeQuery() {
-        const queryInput = document.getElementById('queryInput');
-        const resultsContainer = document.getElementById('queryResults');
-        const loadingOverlay = document.getElementById('queryLoading');
-
-        if (!queryInput || !resultsContainer) return;
-
-        const query = queryInput.value.trim();
-        if (!query) {
-            this.showToast('Please enter a search query', 'warning');
-            return;
-        }
-
-        try {
-            // Show loading state
-            if (loadingOverlay) {
-                loadingOverlay.style.display = 'flex';
-            }
-
-            // Get query parameters
-            const limit = document.getElementById('queryLimit')?.value || 10;
-            const mode = document.getElementById('queryMode')?.value || 'OR';
-            const userName = document.getElementById('queryUserName')?.value || null;
-
-            // Build request
-            const requestBody = {
-                query: query,
-                limit: parseInt(limit),
-                mode: mode
-            };
-
-            if (userName) {
-                requestBody.user_name = userName;
-            }
-
-            // Execute query
-            const response = await fetch(`${this.apiBaseUrl}/query`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody)
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const result = await response.json();
-
-            // Display results
-            this.displayQueryResults(result);
-            this.showToast(`Found ${result.total_results} insights in ${Math.round(result.execution_time_ms)}ms`, 'success');
-
-        } catch (error) {
-            console.error('Query execution failed:', error);
-            this.showToast(`Query failed: ${error.message}`, 'error');
-            this.displayQueryError(error.message);
-        } finally {
-            // Hide loading state
-            if (loadingOverlay) {
-                loadingOverlay.style.display = 'none';
-            }
-        }
-    }
-
-    /**
-     * Display query results in the UI
-     */
-    displayQueryResults(result) {
-        const resultsContainer = document.getElementById('queryResults');
-        if (!resultsContainer) return;
-
-        if (result.propositions.length === 0) {
-            resultsContainer.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-search"></i>
-                    <h3>No insights found</h3>
-                    <p>No insights match your query "${this.escapeHtml(result.query)}". Try different keywords or broader terms.</p>
-                </div>
-            `;
-            return;
-        }
-
-        // Create query stats
-        const statsHtml = `
-            <div class="query-stats">
-                <div class="query-stat">
-                    <i class="fas fa-search"></i>
-                    <span>Query: "${this.escapeHtml(result.query)}"</span>
-                </div>
-                <div class="query-stat">
-                    <i class="fas fa-chart-bar"></i>
-                    <span>${result.total_results} results found</span>
-                </div>
-                <div class="query-stat">
-                    <i class="fas fa-clock"></i>
-                    <span>${Math.round(result.execution_time_ms)}ms</span>
-                </div>
-            </div>
-        `;
-
-        // Create results HTML
-        const resultsHtml = result.propositions.map((prop, index) => {
-            const createdDate = new Date(prop.created_at);
-            const formattedDate = createdDate.toLocaleDateString() + ' ' + 
-                                this.formatLocalTime(prop.created_at);
-            
-            const confidence = prop.confidence;
-            const confidenceClass = this.getConfidenceClass(confidence);
-            const confidenceLabel = this.getConfidenceLabel(confidence);
-
-            return `
-                <div class="query-result-item" style="animation-delay: ${index * 0.1}s">
-                    <div class="query-result-header">
-                        <div class="query-result-meta">
-                            <span class="result-id">#${prop.id}</span>
-                            ${confidence ? `<span class="result-score confidence-${confidenceClass}">${confidenceLabel}</span>` : ''}
-                        </div>
-                    </div>
-                    
-                    <div class="query-result-text">
-                        ${this.escapeHtml(prop.text)}
-                    </div>
-                    
-                    ${prop.reasoning ? `
-                        <div class="query-result-reasoning">
-                            <strong>Reasoning:</strong> ${this.escapeHtml(prop.reasoning)}
-                        </div>
-                    ` : ''}
-                    
-                    <div class="query-result-footer">
-                        <div>
-                            <i class="fas fa-clock"></i>
-                            <span>${formattedDate}</span>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        resultsContainer.innerHTML = statsHtml + resultsHtml;
-    }
-
-    /**
-     * Display query error state
-     */
-    displayQueryError(errorMessage) {
-        const resultsSection = document.getElementById('queryResultsSection');
-        const resultsContainer = document.getElementById('queryResults');
-        const loadingOverlay = document.getElementById('queryLoading');
-
-        if (loadingOverlay) {
-            loadingOverlay.style.display = 'none';
-        }
-
-        if (resultsContainer) {
-            resultsContainer.innerHTML = `
-                <div class="query-error">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <h3>Query Error</h3>
-                    <p>${this.escapeHtml(errorMessage)}</p>
-                </div>
-            `;
-        }
-
-        if (resultsSection) {
-            resultsSection.style.display = 'block';
-        }
-    }
 
     // ===== TIMELINE FUNCTIONALITY =====
 
@@ -1786,85 +1511,50 @@ class GUMApp {
     cleanTranscriptionData(content) {
         if (!content) return '';
 
-        // Extract the most meaningful information only
-        let meaningfulInfo = [];
+        let cleaned = content;
 
-        // Look for application usage
-        const appMatch = content.match(/Application:\s*([^\n]+)/i);
-        if (appMatch) {
-            meaningfulInfo.push(`Using ${appMatch[1].trim()}`);
-        }
+        // Remove technical headers and metadata
+        cleaned = cleaned.replace(/```plaintext\s*/g, '');
+        cleaned = cleaned.replace(/```\s*$/g, '');
+        cleaned = cleaned.replace(/Application:\s*/g, '');
+        cleaned = cleaned.replace(/Window Title:\s*/g, '');
+        cleaned = cleaned.replace(/File Path:\s*/g, '');
+        cleaned = cleaned.replace(/URL:\s*/g, '');
+        cleaned = cleaned.replace(/Timestamp:\s*/g, '');
+        cleaned = cleaned.replace(/Date:\s*/g, '');
 
-        // Look for window titles
-        const titleMatch = content.match(/Window Title:\s*([^\n]+)/i);
-        if (titleMatch) {
-            meaningfulInfo.push(`Viewing: ${titleMatch[1].trim()}`);
-        }
+        // Remove file listings and technical details
+        cleaned = cleaned.replace(/File Explorer:\s*[-•]\s*[^\n]+\n/g, '');
+        cleaned = cleaned.replace(/[-•]\s*[^\n]+\.(py|md|txt|json|yaml|yml|toml|lock|gitignore|license|readme)/gi, '');
+        cleaned = cleaned.replace(/[-•]\s*__pycache__\//g, '');
+        cleaned = cleaned.replace(/[-•]\s*\.git\//g, '');
+        cleaned = cleaned.replace(/[-•]\s*\.vscode\//g, '');
 
-        // Look for URLs
-        const urlMatch = content.match(/URL:\s*([^\n]+)/i);
-        if (urlMatch) {
-            const url = urlMatch[1].trim();
-            // Simplify URLs
-            if (url.includes('localhost')) {
-                meaningfulInfo.push('Using local development server');
-            } else if (url.includes('ycombinator.com')) {
-                meaningfulInfo.push('Working on Y Combinator application');
-            } else if (url.includes('linkedin.com')) {
-                meaningfulInfo.push('Browsing LinkedIn');
-            } else {
-                meaningfulInfo.push(`Browsing: ${url.split('/')[2] || url}`);
-            }
-        }
+        // Remove terminal output and logs
+        cleaned = cleaned.replace(/Terminal Output:\s*/g, '');
+        cleaned = cleaned.replace(/PS C:[^>]*>/g, '');
+        cleaned = cleaned.replace(/\d{2}:\d{2}:\d{2}\s*\[Screen\]\s*[^\n]*/g, '');
+        cleaned = cleaned.replace(/INFO:[^:]*:\s*[^\n]*/g, '');
+        cleaned = cleaned.replace(/DEBUG:[^:]*:\s*[^\n]*/g, '');
+        cleaned = cleaned.replace(/WARNING:[^:]*:\s*[^\n]*/g, '');
+        cleaned = cleaned.replace(/ERROR:[^:]*:\s*[^\n]*/g, '');
 
-        // Look for specific content patterns
-        if (content.includes('VS Code') || content.includes('Visual Studio Code')) {
-            meaningfulInfo.push('Coding in VS Code');
-        }
-        
-        if (content.includes('README.md')) {
-            meaningfulInfo.push('Reading documentation');
-        }
-        
-        if (content.includes('Y Combinator')) {
-            meaningfulInfo.push('Working on Y Combinator application');
-        }
-        
-        if (content.includes('LinkedIn')) {
-            meaningfulInfo.push('Using LinkedIn');
-        }
-        
-        if (content.includes('Dashboard')) {
-            meaningfulInfo.push('Viewing dashboard');
-        }
-        
-        if (content.includes('Timeline View')) {
-            meaningfulInfo.push('Checking timeline insights');
-        }
+        // Remove markdown formatting
+        cleaned = cleaned.replace(/#{1,6}\s*/g, '');
+        cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
+        cleaned = cleaned.replace(/\*([^*]+)\*/g, '$1');
+        cleaned = cleaned.replace(/`([^`]+)`/g, '$1');
 
-        // Look for terminal/command line activity
-        if (content.includes('python -m gum.cli') || content.includes('start_gum.py')) {
-            meaningfulInfo.push('Running GUM application');
-        }
+        // Remove code blocks
+        cleaned = cleaned.replace(/```bash\s*[^`]*```/g, '');
+        cleaned = cleaned.replace(/```\s*[^`]*```/g, '');
 
-        // Look for file/folder activity
-        if (content.includes('File Explorer') || content.includes('Folder Structure')) {
-            meaningfulInfo.push('Managing files');
-        }
+        // Clean up application names
+        cleaned = cleaned.replace(/Application:\s*([^\n]+)/g, 'Using $1');
+        cleaned = cleaned.replace(/Title:\s*([^\n]+)/g, 'Viewing: $1');
 
-        // Look for weather/time info (user context)
-        const weatherMatch = content.match(/(\d+°F\s+\w+)/);
-        if (weatherMatch) {
-            meaningfulInfo.push(`Weather: ${weatherMatch[1]}`);
-        }
-
-        // If we found meaningful information, return it
-        if (meaningfulInfo.length > 0) {
-            return meaningfulInfo.join(' • ');
-        }
-
-        // Fallback: try to extract any readable content
-        const lines = content.split('\n').filter(line => {
+        // Extract meaningful content
+        const lines = cleaned.split('\n').filter(line => {
             const trimmed = line.trim();
             return trimmed.length > 0 && 
                    !trimmed.match(/^[-•\s]*$/) &&
@@ -1874,166 +1564,54 @@ class GUMApp {
                    !trimmed.match(/^INFO:/) &&
                    !trimmed.match(/^DEBUG:/) &&
                    !trimmed.match(/^WARNING:/) &&
-                   !trimmed.match(/^ERROR:/) &&
-                   !trimmed.match(/^```/) &&
-                   !trimmed.match(/^###/) &&
-                   !trimmed.match(/^File Paths?:/) &&
-                   !trimmed.match(/^Folder Structure:/) &&
-                   !trimmed.match(/^Sidebar Content:/) &&
-                   !trimmed.match(/^Terminal:/) &&
-                   !trimmed.match(/^Timestamp:/) &&
-                   !trimmed.match(/^Date:/) &&
-                   !trimmed.match(/^Weather:/) &&
-                   !trimmed.match(/^Taskbar/) &&
-                   !trimmed.match(/^Desktop Background:/) &&
-                   !trimmed.match(/^Visible Folders:/) &&
-                   !trimmed.match(/^Files and Folders:/) &&
-                   !trimmed.match(/^Other Text in Terminal:/) &&
-                   !trimmed.match(/^Right Sidebar Text:/) &&
-                   !trimmed.match(/^Navigation:/) &&
-                   !trimmed.match(/^Call to action:/) &&
-                   !trimmed.match(/^Button:/) &&
-                   !trimmed.match(/^Ad:/) &&
-                   !trimmed.match(/^Promotion:/) &&
-                   !trimmed.match(/^Followers:/) &&
-                   !trimmed.match(/^Comments:/) &&
-                   !trimmed.match(/^Reposts:/) &&
-                   !trimmed.match(/^Activity:/) &&
-                   !trimmed.match(/^Description:/) &&
-                   !trimmed.match(/^Accomplishments/) &&
-                   !trimmed.match(/^Please tell us/) &&
-                   !trimmed.match(/^Tell us about/) &&
-                   !trimmed.match(/^List any/) &&
-                   !trimmed.match(/^You're being asked/) &&
-                   !trimmed.match(/^My gym allowed/) &&
-                   !trimmed.match(/^This loophole/) &&
-                   !trimmed.match(/^FoundersCard/) &&
-                   !trimmed.match(/^CEO Founders/) &&
-                   !trimmed.match(/^Entrepreneurs/) &&
-                   !trimmed.match(/^Claim your/) &&
-                   !trimmed.match(/^Try for \$/) &&
-                   !trimmed.match(/^See who's viewed/) &&
-                   !trimmed.match(/^unlock your full/) &&
-                   !trimmed.match(/^Post a job/) &&
-                   !trimmed.match(/^For Business/) &&
-                   !trimmed.match(/^Home - My Network/) &&
-                   !trimmed.match(/^Jobs - Messaging/) &&
-                   !trimmed.match(/^Notifications/) &&
-                   !trimmed.match(/^LinkedIn Premium/) &&
-                   !trimmed.match(/^Rishab Siddamshetty/) &&
-                   !trimmed.match(/^114,572 followers/) &&
-                   !trimmed.match(/^43 comments/) &&
-                   !trimmed.match(/^10 reposts/) &&
-                   !trimmed.match(/^313 others/) &&
-                   !trimmed.match(/^General User Models/) &&
-                   !trimmed.match(/^GUM takes as input/) &&
-                   !trimmed.match(/^GUMs introduce an architecture/) &&
-                   !trimmed.match(/^python start_gum.py/) &&
-                   !trimmed.match(/^Listening to Arnav Sharma/) &&
-                   !trimmed.match(/^Screen observer started/) &&
-                   !trimmed.match(/^guarding 0/) &&
-                   !trimmed.match(/^model gpt-40-mini/) &&
-                   !trimmed.match(/^model gpt-4o-mini/) &&
-                   !trimmed.match(/^C:\\Users\\arnav/) &&
-                   !trimmed.match(/^C:\\Users\\ArnavDev/) &&
-                   !trimmed.match(/^C:\\Users\\ArnavOneDrive/) &&
-                   !trimmed.match(/^OneDrive\\Desktop/) &&
-                   !trimmed.match(/^Desktop\\gum/) &&
-                   !trimmed.match(/^__pycache__/) &&
-                   !trimmed.match(/^__init__.py/) &&
-                   !trimmed.match(/^models.py/) &&
-                   !trimmed.match(/^schemas.py/) &&
-                   !trimmed.match(/^start_gum.py/) &&
-                   !trimmed.match(/^screen.py/) &&
-                   !trimmed.match(/^util.py/) &&
-                   !trimmed.match(/^rights.py/) &&
-                   !trimmed.match(/^unified_ai_client.py/) &&
-                   !trimmed.match(/^test.gum.py/) &&
-                   !trimmed.match(/^setup.py/) &&
-                   !trimmed.match(/^sklpyt.tpm/) &&
-                   !trimmed.match(/^LICENSE/) &&
-                   !trimmed.match(/^README.md/) &&
-                   !trimmed.match(/^observer.py/) &&
-                   !trimmed.match(/^gump/) &&
-                   !trimmed.match(/^landingpage/) &&
-                   !trimmed.match(/^PERSONAL SITE/) &&
-                   !trimmed.match(/^zavion/) &&
-                   !trimmed.match(/^Personal Site 2/) &&
-                   !trimmed.match(/^gum2/) &&
-                   !trimmed.match(/^build/) &&
-                   !trimmed.match(/^nobs/) &&
-                   !trimmed.match(/^RealDeal/) &&
-                   !trimmed.match(/^frick/) &&
-                   !trimmed.match(/^arnav_shar/) &&
-                   !trimmed.match(/^sigh/) &&
-                   !trimmed.match(/^final/) &&
-                   !trimmed.match(/^Problems/) &&
-                   !trimmed.match(/^Output/) &&
-                   !trimmed.match(/^Debug Console/) &&
-                   !trimmed.match(/^Terminal/) &&
-                   !trimmed.match(/^agood -20/) &&
-                   !trimmed.match(/^head -20/) &&
-                   !trimmed.match(/^Search/) &&
-                   !trimmed.match(/^Edge/) &&
-                   !trimmed.match(/^Various icons/) &&
-                   !trimmed.match(/^not identified textually/) &&
-                   !trimmed.match(/^1:33 PM/) &&
-                   !trimmed.match(/^8/4/2025/) &&
-                   !trimmed.match(/^75°F/) &&
-                   !trimmed.match(/^Sunny/) &&
-                   !trimmed.match(/^Chrome/) &&
-                   !trimmed.match(/^visible in taskbar/) &&
-                   !trimmed.match(/^Min Confidence/) &&
-                   !trimmed.match(/^Loading/) &&
-                   !trimmed.match(/^Click Insights/) &&
-                   !trimmed.match(/^18 insights/) &&
-                   !trimmed.match(/^1 hour/) &&
-                   !trimmed.match(/^localhost:3000/) &&
-                   !trimmed.match(/^apply.ycombinator.com/) &&
-                   !trimmed.match(/^bio/edit/) &&
-                   !trimmed.match(/^Confidence: \d+/) &&
-                   !trimmed.match(/^#\d+/) &&
-                   !trimmed.match(/^Arnav Sharma is/) &&
-                   !trimmed.match(/^actively developing/) &&
-                   !trimmed.match(/^interested in user modeling/) &&
-                   !trimmed.match(/^using or testing/) &&
-                   !trimmed.match(/^utilizing GPT-40/) &&
-                   !trimmed.match(/^prioritizes development/) &&
-                   !trimmed.match(/^likely working on/) &&
-                   !trimmed.match(/^may not be actively/) &&
-                   !trimmed.match(/^not currently prioritizing/) &&
-                   !trimmed.match(/^strategic mindset/) &&
-                   !trimmed.match(/^adept at finding loopholes/) &&
-                   !trimmed.match(/^using the Observational/) &&
-                   !trimmed.match(/^prioritizes documenting/) &&
-                   !trimmed.match(/^Feed \| LinkedIn/) &&
-                   !trimmed.match(/^Rishab Siddamshetty and/) &&
-                   !trimmed.match(/^FoundersCard/) &&
-                   !trimmed.match(/^CEO Founders/) &&
-                   !trimmed.match(/^Entrepreneurs/) &&
-                   !trimmed.match(/^Claim your Membership/) &&
-                   !trimmed.match(/^lnkd.in/) &&
-                   !trimmed.match(/^My Network/) &&
-                   !trimmed.match(/^Jobs - Messaging/) &&
-                   !trimmed.match(/^Notifications/) &&
-                   !trimmed.match(/^For Business/) &&
-                   !trimmed.match(/^Post a job/) &&
-                   !trimmed.match(/^LinkedIn Premium/) &&
-                   !trimmed.match(/^unlock your full potential/) &&
-                   !trimmed.match(/^See who's viewed/) &&
-                   !trimmed.match(/^Try for \$0/) &&
-                   !trimmed.match(/^365 days/);
+                   !trimmed.match(/^ERROR:/);
         });
 
         // Join and clean up
-        const cleaned = lines.join(' ').trim();
+        cleaned = lines.join('\n').trim();
 
-        // If we have some readable content, return it (truncated)
+        // If we have meaningful content, format it nicely
         if (cleaned.length > 0) {
-            return cleaned.length > 100 ? cleaned.substring(0, 100) + '...' : cleaned;
+            // Extract the most meaningful parts
+            const meaningfulParts = [];
+            
+            // Look for application usage
+            const appMatch = content.match(/Application:\s*([^\n]+)/);
+            if (appMatch) {
+                meaningfulParts.push(`Using ${appMatch[1].trim()}`);
+            }
+
+            // Look for window titles
+            const titleMatch = content.match(/Window Title:\s*([^\n]+)/);
+            if (titleMatch) {
+                meaningfulParts.push(`Viewing: ${titleMatch[1].trim()}`);
+            }
+
+            // Look for URLs
+            const urlMatch = content.match(/URL:\s*([^\n]+)/);
+            if (urlMatch) {
+                meaningfulParts.push(`Browsing: ${urlMatch[1].trim()}`);
+            }
+
+            // Look for visible text content
+            const textMatch = content.match(/Visible Text Content and UI Elements:\s*([^]*?)(?=\n[A-Z]|$)/);
+            if (textMatch) {
+                const textContent = textMatch[1].trim();
+                if (textContent.length > 0) {
+                    meaningfulParts.push(`Content: ${textContent.substring(0, 100)}${textContent.length > 100 ? '...' : ''}`);
+                }
+            }
+
+            // If we found meaningful parts, use them
+            if (meaningfulParts.length > 0) {
+                return meaningfulParts.join(' • ');
+            }
+
+            // Otherwise, return cleaned content (truncated if too long)
+            return cleaned.length > 200 ? cleaned.substring(0, 200) + '...' : cleaned;
         }
 
-        // Final fallback
+        // Fallback: return a generic description
         return 'Screen activity recorded';
     }
 
@@ -2047,7 +1625,7 @@ class GUMApp {
 
         return `
             <div class="narrative-timeline-hour-item" data-hour="${hourGroup.hour}">
-                <div class="narrative-timeline-hour-header" onclick="window.gumApp?.toggleNarrativeTimelineHourDetails(${hourGroup.hour})">
+                <div class="narrative-timeline-hour-header" onclick="window.zavionApp?.toggleNarrativeTimelineHourDetails(${hourGroup.hour})">
                     <div class="narrative-timeline-hour-info">
                         <h4 class="narrative-timeline-hour-title">
                             <i class="fas fa-clock"></i>
@@ -2183,7 +1761,7 @@ class GUMApp {
 
 // Initialize application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.gumApp = new GUMApp();
+    window.zavionApp = new ZavionApp();
 });
 
 // Add CSS for results display dynamically

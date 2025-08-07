@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Observational Learning</title>
+    <title>Zavion</title>
     <link rel="stylesheet" href="static/css/styles.css?v=2">
-    <link rel="stylesheet" href="static/css/chat.css?v=1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
@@ -17,7 +16,7 @@
         <nav class="nav" role="navigation" aria-label="Main navigation">
             <div class="logo">
                 <i class="fas fa-video" aria-hidden="true"></i>
-                <span>Observational Learning</span>
+                <span>Zavion</span>
             </div>
             <div class="nav-actions">
                 <div class="connection-status" id="connectionStatus">
@@ -36,7 +35,7 @@
         <!-- Hero Section -->
         <section class="hero">
             <div class="hero-content">
-                <h1>Observational Learning</h1>
+                <h1>Zavion</h1>
                 <p>Advanced AI-powered analysis for user behavior patterns and insights</p>
             </div>
         </section>
@@ -65,7 +64,7 @@
                     <div class="card-header">
                         <h2>
                             <i class="fas fa-home"></i>
-                            Welcome to Observational Learning
+                            Welcome to Zavion
                         </h2>
                         <p>Advanced AI-powered analysis for user behavior patterns and insights</p>
                     </div>
@@ -75,7 +74,7 @@
                             <div class="welcome-text">
                                 <h3>Get Started</h3>
                                 <p>Ready to explore your user behavior patterns and gain valuable insights? Click below to access the full dashboard.</p>
-                                <button class="btn-primary" onclick="window.gumApp?.switchTab('dashboard')">
+                                <button class="btn-primary" onclick="window.zavionApp?.switchTab('dashboard')">
                                     <i class="fas fa-arrow-right"></i>
                                     Go to Dashboard
                                 </button>
@@ -91,25 +90,13 @@
                 <section class="dashboard-tabs-navigation">
                     <div class="dashboard-tabs-container">
                         <nav class="dashboard-tabs-nav" role="tablist">
-                            <button class="dashboard-tab-button active" id="analysisTab" data-dashboard-tab="analysis" role="tab" aria-selected="true" aria-controls="analysis-panel">
-                                <i class="fas fa-chart-line"></i>
-                                <span>Recent Analysis</span>
-                            </button>
-                            <button class="dashboard-tab-button" id="insightsTab" data-dashboard-tab="insights" role="tab" aria-selected="false" aria-controls="insights-panel">
+                            <button class="dashboard-tab-button active" id="insightsTab" data-dashboard-tab="insights" role="tab" aria-selected="true" aria-controls="insights-panel">
                                 <i class="fas fa-lightbulb"></i>
                                 <span>User Behaviour Insights</span>
                             </button>
                             <button class="dashboard-tab-button" id="timelineTab" data-dashboard-tab="timeline" role="tab" aria-selected="false" aria-controls="timeline-panel">
                                 <i class="fas fa-clock"></i>
                                 <span>Timeline View</span>
-                            </button>
-                            <button class="dashboard-tab-button" id="queryTab" data-dashboard-tab="query" role="tab" aria-selected="false" aria-controls="query-panel">
-                                <i class="fas fa-search"></i>
-                                <span>Query Insights</span>
-                            </button>
-                            <button class="dashboard-tab-button" id="chatTab" data-dashboard-tab="chat" role="tab" aria-selected="false" aria-controls="chat-panel">
-                                <i class="fas fa-comments"></i>
-                                <span>AI Assistant</span>
                             </button>
                             <button class="dashboard-tab-button" id="narrativeTimelineTab" data-dashboard-tab="narrative-timeline" role="tab" aria-selected="false" aria-controls="narrative-timeline-panel">
                                 <i class="fas fa-list-alt"></i>
@@ -121,37 +108,10 @@
 
                 <!-- Dashboard Tab Panels -->
                 <section class="dashboard-tabs-content">
-                    <!-- Recent Analysis Tab -->
-                    <div class="dashboard-tab-panel active" id="analysis-panel" role="tabpanel" aria-labelledby="analysisTab">
-                        <div class="panel-card">
-                            <div class="card-header">
-                                <h2>
-                                    <i class="fas fa-chart-line"></i>
-                                    Recent Analysis
-                                </h2>
-                                <p>View recent observations and analysis results from the system</p>
-                                <div class="header-actions">
-                                    <button class="btn-secondary" id="refreshHistory">
-                                        <i class="fas fa-refresh" aria-hidden="true"></i>
-                                        Refresh
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div class="history-section">
-                                <div class="history-content" id="historyContent">
-                                    <div class="empty-state">
-                                        <i class="fas fa-chart-line" aria-hidden="true"></i>
-                                        <h3>No recent analysis</h3>
-                                        <p>Upload a video or submit observations to see analysis results here</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+
 
                     <!-- User Behaviour Insights Tab -->
-                    <div class="dashboard-tab-panel" id="insights-panel" role="tabpanel" aria-labelledby="insightsTab">
+                    <div class="dashboard-tab-panel active" id="insights-panel" role="tabpanel" aria-labelledby="insightsTab">
                         <div class="panel-card">
                             <div class="card-header">
                                 <h2>
@@ -257,157 +217,9 @@
                         </div>
                     </div>
 
-                    <!-- Query Insights Tab -->
-                    <div class="dashboard-tab-panel" id="query-panel" role="tabpanel" aria-labelledby="queryTab">
-                        <div class="panel-card">
-                            <div class="card-header">
-                                <h2>
-                                    <i class="fas fa-search"></i>
-                                    Query Insights
-                                </h2>
-                                <p>Search and explore insights using natural language queries</p>
-                            </div>
-                            
-                            <div class="query-section">
-                                <div class="query-form">
-                                    <div class="search-container">
-                                        <div class="search-input-group">
-                                            <input 
-                                                type="text" 
-                                                id="queryInput" 
-                                                placeholder="Ask about user behavior patterns, productivity, applications usage..."
-                                                class="search-input"
-                                                aria-label="Search query"
-                                            >
-                                            <button type="button" class="search-btn" id="querySearchBtn">
-                                                <i class="fas fa-search"></i>
-                                            </button>
-                                        </div>
-                                        <div class="search-options">
-                                            <div class="option-group">
-                                                <label for="queryLimit">Results:</label>
-                                                <select id="queryLimit">
-                                                    <option value="5">5 results</option>
-                                                    <option value="10" selected>10 results</option>
-                                                    <option value="20">20 results</option>
-                                                    <option value="50">50 results</option>
-                                                </select>
-                                            </div>
-                                            <div class="option-group">
-                                                <label for="queryMode">Mode:</label>
-                                                <select id="queryMode">
-                                                    <option value="OR" selected>OR (broader)</option>
-                                                    <option value="AND">AND (precise)</option>
-                                                </select>
-                                            </div>
-                                            <div class="option-group">
-                                                <label for="queryUserName">User:</label>
-                                                <input 
-                                                    type="text" 
-                                                    id="queryUserName" 
-                                                    placeholder="Optional user filter"
-                                                    class="user-input"
-                                                >
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="query-examples">
-                                    <h3>Example Queries:</h3>
-                                    <div class="examples-grid">
-                                        <button class="example-query" data-query="productivity patterns">
-                                            Productivity patterns
-                                        </button>
-                                        <button class="example-query" data-query="application usage">
-                                            Application usage
-                                        </button>
-                                        <button class="example-query" data-query="time management">
-                                            Time management
-                                        </button>
-                                        <button class="example-query" data-query="communication habits">
-                                            Communication habits
-                                        </button>
-                                        <button class="example-query" data-query="workflow efficiency">
-                                            Workflow efficiency
-                                        </button>
-                                        <button class="example-query" data-query="focus and distraction">
-                                            Focus and distraction
-                                        </button>
-                                    </div>
-                                </div>
-                                
-                                <div class="query-results-section" id="queryResultsSection">
-                                    <div class="loading-overlay" id="queryLoading" style="display: none;">
-                                        <div class="spinner"></div>
-                                        <span>Searching insights...</span>
-                                    </div>
-                                    
-                                    <div class="query-results" id="queryResults">
-                                        <div class="empty-state">
-                                            <i class="fas fa-search" aria-hidden="true"></i>
-                                            <h3>Ready to search</h3>
-                                            <p>Enter a query above or try one of the example queries to get started</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+
                     
-                    <!-- AI Assistant Chat Tab -->
-                    <div class="dashboard-tab-panel" id="chat-panel" role="tabpanel" aria-labelledby="chatTab">
-                        <div class="panel-card">
-                            <div class="card-header">
-                                <h2>
-                                    <i class="fas fa-comments"></i>
-                                    Zavion AI Assistant
-                                </h2>
-                                <p>Chat with your personal AI assistant that understands your behavior patterns</p>
-                            </div>
-                            
-                            <div class="chat-container">
-                                <div class="chat-header">
-                                    <h3>
-                                        <i class="fas fa-robot"></i>
-                                        Zavion AI
-                                    </h3>
-                                    <div class="ai-status">
-                                        <div class="status-dot"></div>
-                                        <span>Online</span>
-                                    </div>
-                                </div>
-                                
-                                <div class="chat-messages" id="chatMessages">
-                                    <!-- Messages will be dynamically added here -->
-                                </div>
-                                
-                                <div class="chat-input-container">
-                                    <div class="chat-input-wrapper">
-                                        <textarea 
-                                            id="chatInput" 
-                                            class="chat-input" 
-                                            placeholder="Ask me about your productivity, workflow, or behavior patterns..."
-                                            rows="1"
-                                        ></textarea>
-                                        <button id="sendChatBtn" class="send-button" type="button">
-                                            <i class="fas fa-paper-plane"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                
-                                <div class="chat-suggestions">
-                                    <div class="suggestions-title">Quick Questions:</div>
-                                    <div class="suggestion-chips">
-                                        <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('When am I most productive?')">When am I most productive?</div>
-                                        <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('What apps do I use most?')">What apps do I use most?</div>
-                                        <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('How can I optimize my workflow?')">How can I optimize my workflow?</div>
-                                        <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('Show me my recent patterns')">Show me my recent patterns</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+
                     
                     <!-- Narrative Timeline Tab -->
                     <div class="dashboard-tab-panel" id="narrative-timeline-panel" role="tabpanel" aria-labelledby="narrativeTimelineTab">
@@ -590,101 +402,7 @@
                             </div>
                         </div>
                         
-                        <div class="query-examples">
-                            <h3>Example Queries:</h3>
-                            <div class="examples-grid">
-                                <button class="example-query" data-query="productivity patterns">
-                                    Productivity patterns
-                                </button>
-                                <button class="example-query" data-query="application usage">
-                                    Application usage
-                                </button>
-                                <button class="example-query" data-query="time management">
-                                    Time management
-                                </button>
-                                <button class="example-query" data-query="communication habits">
-                                    Communication habits
-                                </button>
-                                <button class="example-query" data-query="workflow efficiency">
-                                    Workflow efficiency
-                                </button>
-                                <button class="example-query" data-query="focus and distraction">
-                                    Focus and distraction
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="query-results-section" id="queryResultsSection">
-                            <div class="loading-overlay" id="queryLoading" style="display: none;">
-                                <div class="spinner"></div>
-                                <span>Searching insights...</span>
-                            </div>
-                            
-                            <div class="query-results" id="queryResults">
-                                <div class="empty-state">
-                                    <i class="fas fa-search" aria-hidden="true"></i>
-                                    <h3>Ready to search</h3>
-                                    <p>Enter a query above or try one of the example queries to get started</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- AI Assistant Chat Tab -->
-            <div class="tab-panel" id="chat-panel" role="tabpanel" aria-labelledby="chatTab">
-                <div class="panel-card">
-                    <div class="card-header">
-                        <h2>
-                            <i class="fas fa-comments"></i>
-                            Zavion AI Assistant
-                        </h2>
-                        <p>Chat with your personal AI assistant that understands your behavior patterns</p>
-                    </div>
-                    
-                    <div class="chat-container">
-                        <div class="chat-header">
-                            <h3>
-                                <i class="fas fa-robot"></i>
-                                Zavion AI
-                            </h3>
-                            <div class="ai-status">
-                                <div class="status-dot"></div>
-                                <span>Online</span>
-                            </div>
-                        </div>
-                        
-                        <div class="chat-messages" id="chatMessages">
-                            <!-- Messages will be dynamically added here -->
-                        </div>
-                        
-                        <div class="chat-input-container">
-                            <div class="chat-input-wrapper">
-                                <textarea 
-                                    id="chatInput" 
-                                    class="chat-input" 
-                                    placeholder="Ask me about your productivity, workflow, or behavior patterns..."
-                                    rows="1"
-                                ></textarea>
-                                <button id="sendChatBtn" class="send-button" type="button">
-                                    <i class="fas fa-paper-plane"></i>
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="chat-suggestions">
-                            <div class="suggestions-title">Quick Questions:</div>
-                            <div class="suggestion-chips">
-                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('When am I most productive?')">When am I most productive?</div>
-                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('What apps do I use most?')">What apps do I use most?</div>
-                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('How can I optimize my workflow?')">How can I optimize my workflow?</div>
-                                <div class="suggestion-chip" onclick="window.zavionChat?.sendSuggestion('Show me my recent patterns')">Show me my recent patterns</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+
         </section>
     </main>
 
@@ -694,6 +412,5 @@
 
 
     <script src="static/js/app.js?v=2"></script>
-    <script src="static/js/chat.js?v=1"></script>
 </body>
 </html>

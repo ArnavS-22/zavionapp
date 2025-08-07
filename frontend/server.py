@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simple HTTP server for GUM Frontend
+Simple HTTP server for Zavion Frontend
 
-Serves the static frontend files for the GUM web interface.
+Serves the static frontend files for the Zavion web interface.
 """
 
 import os
@@ -11,7 +11,7 @@ import socketserver
 from pathlib import Path
 from urllib.parse import urlparse
 
-class GUMFrontendHandler(http.server.SimpleHTTPRequestHandler):
+class ZavionFrontendHandler(http.server.SimpleHTTPRequestHandler):
     """Custom handler to serve the frontend files."""
     
     def __init__(self, *args, **kwargs):
@@ -40,7 +40,7 @@ class GUMFrontendHandler(http.server.SimpleHTTPRequestHandler):
             # Inject the backend address as a global JavaScript variable
             config_script = f"""
     <script>
-        window.GUM_CONFIG = {{
+        window.ZAVION_CONFIG = {{
             apiBaseUrl: '{backend_address}'
         }};
     </script>"""
@@ -106,7 +106,7 @@ class GUMFrontendHandler(http.server.SimpleHTTPRequestHandler):
 def serve_frontend(port=3000, host='localhost'):
     """Start the frontend server."""
     # Load and display the configuration
-    handler = GUMFrontendHandler
+    handler = ZavionFrontendHandler
     frontend_dir = Path(__file__).parent
     
     # Check backend address with proper hierarchy
@@ -149,12 +149,12 @@ def serve_frontend(port=3000, host='localhost'):
     
     backend_address, source = load_config_for_display()
     
-    print(f"Starting GUM Frontend Server")
+    print(f"Starting Zavion Frontend Server")
     print(f"Serving from: {frontend_dir}")
     print(f"Frontend URL: http://{host}:{port}")
     print(f"API Backend URL: {backend_address}")
     print(f"Configuration source: {source}")
-    print(f"Open the frontend URL in your browser to access the GUM interface")
+    print(f"Open the frontend URL in your browser to access the Zavion interface")
     print("=" * 60)
     
     try:
@@ -174,7 +174,7 @@ def serve_frontend(port=3000, host='localhost'):
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="GUM Frontend Server")
+    parser = argparse.ArgumentParser(description="Zavion Frontend Server")
     parser.add_argument("--port", type=int, default=3000, help="Port to serve on (default: 3000)")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: localhost)")
     

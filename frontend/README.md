@@ -1,6 +1,6 @@
-# GUM Frontend Web Interface
+# Zavion Frontend Web Interface
 
-A modern, responsive web interface for interacting with the GUM (General User Models) REST API. This frontend allows users to submit observations, query insights, and view observation history through an intuitive web interface.
+A modern, responsive web interface for interacting with the Zavion REST API. This frontend allows users to submit observations, query insights, and view observation history through an intuitive web interface.
 
 ## Features
 
@@ -47,13 +47,13 @@ frontend/
 ## Setup & Installation
 
 ### Prerequisites
-- GUM API Controller running (usually on port 8001)
+- Zavion API Controller running (usually on port 8001)
 - Python 3.6+ (for the simple server)
 - Modern web browser
 
 ### Quick Start
 
-1. **Start the GUM API Controller** (in the main GUM directory):
+1. **Start the Zavion API Controller** (in the main Zavion directory):
    ```bash
    cd /path/to/gum
    python controller.py --port 8001
@@ -87,7 +87,7 @@ The frontend automatically loads the API base URL from the environment configura
 
 1. **Recommended**: Edit `frontend/.env` file:
    ```env
-   # GUM Frontend Configuration
+   # Zavion Frontend Configuration
    BACKEND_ADDRESS=http://localhost:8002
    ```
 
@@ -198,7 +198,7 @@ python server.py --port 8080
 
 
 ### API Integration
-All API calls are handled in the `GUMApp` class methods:
+All API calls are handled in the `ZavionApp` class methods:
 - `submitTextObservation()`
 - `submitImageObservation()`
 - `queryInsights()`
@@ -206,8 +206,8 @@ All API calls are handled in the `GUMApp` class methods:
 
 ## Troubleshooting
 
-### "Cannot connect to GUM API"
-- Ensure the GUM API controller is running on port 8001
+### "Cannot connect to Zavion API"
+- Ensure the Zavion API controller is running on port 8001
 - Check that both frontend and API are on the same network
 - Verify firewall settings aren't blocking connections
 
@@ -228,7 +228,7 @@ All API calls are handled in the `GUMApp` class methods:
 
 ## Security Considerations
 ### Privacy
-- All data is processed locally through your GUM instance
-- Images are sent to Azure OpenAI for analysis (per GUM configuration)
+- All data is processed locally through your Zavion instance
+- Images are sent to Azure OpenAI for analysis (per Zavion configuration)
 - No data is stored by the frontend itself
 
