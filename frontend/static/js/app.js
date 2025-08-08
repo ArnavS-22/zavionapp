@@ -1263,11 +1263,11 @@ class ZavionApp {
                 <div class="timeline-stats">
                     <div class="timeline-stat">
                         <i class="fas fa-clock"></i>
-                        <span>${timelineData.total_hours} hours</span>
+                        <span>${timelineData.total_hours} ${timelineData.total_hours === 1 ? 'hour' : 'hours'}</span>
                     </div>
                     <div class="timeline-stat">
                         <i class="fas fa-lightbulb"></i>
-                        <span>${timelineData.total_propositions} insights</span>
+                        <span>${timelineData.total_propositions} ${timelineData.total_propositions === 1 ? 'insight' : 'insights'}</span>
                     </div>
                 </div>
             </div>
@@ -1482,11 +1482,11 @@ class ZavionApp {
                 <div class="narrative-timeline-stats">
                     <div class="narrative-timeline-stat">
                         <i class="fas fa-clock"></i>
-                        <span>${timelineData.total_hours} hours</span>
+                        <span>${timelineData.total_hours} ${timelineData.total_hours === 1 ? 'hour' : 'hours'}</span>
                     </div>
                     <div class="narrative-timeline-stat">
                         <i class="fas fa-list-alt"></i>
-                        <span>${timelineData.total_observations} activities</span>
+                        <span>${timelineData.total_observations} ${timelineData.total_observations === 1 ? 'activity' : 'activities'}</span>
                     </div>
                     <div class="narrative-timeline-stat">
                         <i class="fas fa-globe"></i>
@@ -1707,21 +1707,48 @@ class ZavionApp {
      */
     formatLocalTime(dateString) {
         try {
+            console.log('🔥🔥🔥 formatLocalTime CALLED with input:', dateString);
+            
             // Parse the UTC date string and convert to local time
             const date = new Date(dateString);
             
+            console.log('Parsed date object:', date);
+            console.log('Date.getTime():', date.getTime());
+            console.log('Is valid:', !isNaN(date.getTime()));
+            
             // Check if the date is valid
             if (isNaN(date.getTime())) {
+                console.log('Invalid date, returning error');
                 return 'Invalid time';
             }
             
+            // If the dateString doesn't have timezone info, assume it's UTC
+            // and create a proper UTC date object
+            if (!dateString.includes('Z') && !dateString.includes('+')) {
+                console.log('No timezone info, treating as UTC');
+                // Treat as UTC and convert to local
+                const utcDate = new Date(dateString + 'Z');
+                if (!isNaN(utcDate.getTime())) {
+                    const result = utcDate.toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                        timeZoneName: 'short'
+                    });
+                    console.log('UTC conversion result:', result);
+                    return result;
+                }
+            }
+            
             // Format in local timezone
-            return date.toLocaleTimeString('en-US', {
+            const result = date.toLocaleTimeString('en-US', {
                 hour: 'numeric',
                 minute: '2-digit',
                 hour12: true,
                 timeZoneName: 'short' // This will show the timezone
             });
+            console.log('Direct conversion result:', result);
+            return result;
         } catch (error) {
             console.error('Error formatting time:', error);
             return 'Time error';

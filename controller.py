@@ -17,12 +17,13 @@ import time
 import uuid
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from dateutil import parser as date_parser
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Union
 from asyncio import Semaphore
+import pytz
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status, Request
@@ -157,7 +158,7 @@ class ObservationResponse(BaseModel):
     content: str = Field(..., description="Observation content")
     content_type: str = Field(..., description="Type of content (input_text, input_image)")
     observer_name: str = Field(..., description="Name of the observer")
-    created_at: datetime = Field(..., description="When the observation was created")
+    created_at: str = Field(..., description="When the observation was created (ISO format)")
 
 
 class PropositionResponse(BaseModel):
@@ -166,7 +167,7 @@ class PropositionResponse(BaseModel):
     text: str = Field(..., description="Proposition text")
     reasoning: Optional[str] = Field(None, description="Reasoning behind the proposition")
     confidence: Optional[float] = Field(None, description="Confidence score")
-    created_at: datetime = Field(..., description="When the proposition was created")
+    created_at: str = Field(..., description="When the proposition was created (ISO format)")
 
 
 class QueryResponse(BaseModel):
@@ -180,7 +181,7 @@ class QueryResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Response model for health check."""
     status: str = Field(..., description="Service status")
-    timestamp: datetime = Field(..., description="Current timestamp")
+    timestamp: str = Field(..., description="Current timestamp (ISO format)")
     gum_connected: bool = Field(..., description="Whether GUM database is connected")
     version: str = Field(..., description="API version")
 
@@ -189,7 +190,7 @@ class ErrorResponse(BaseModel):
     """Response model for errors."""
     error: str = Field(..., description="Error message")
     detail: Optional[str] = Field(None, description="Additional error details")
-    timestamp: datetime = Field(..., description="Error timestamp")
+    timestamp: str = Field(..., description="Error timestamp (ISO format)")
 
 
 # === Mock Observer Class ===
@@ -212,8 +213,25 @@ class APIObserver(Observer):
 def parse_datetime(date_value) -> datetime:
     """Parse datetime from string or return as-is if already datetime."""
     if isinstance(date_value, str):
-        return date_parser.parse(date_value)
+        # Use dateutil parser to handle various formats
+        parsed = date_parser.parse(date_value)
+        # If the parsed datetime has no timezone info, assume it's UTC
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    elif isinstance(date_value, datetime):
+        # If datetime has no timezone info, assume it's UTC
+        if date_value.tzinfo is None:
+            return date_value.replace(tzinfo=timezone.utc)
+        return date_value
     return date_value
+
+
+def serialize_datetime(dt: datetime) -> str:
+    """Serialize datetime to ISO format with timezone information."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 async def ensure_gum_instance(user_name: Optional[str] = None) -> gum:
@@ -595,7 +613,7 @@ async def get_rate_limit_stats():
         return {
             "global_stats": global_stats,
             "endpoint_stats": endpoint_stats,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": serialize_datetime(datetime.now(timezone.utc))
         }
     except Exception as e:
         logger.error(f"Error getting rate limit stats: {e}")
@@ -640,7 +658,7 @@ async def health_check():
         
         return HealthResponse(
             status="healthy" if gum_connected else "unhealthy",
-            timestamp=datetime.now(),
+            timestamp=serialize_datetime(datetime.now(timezone.utc)),
             gum_connected=gum_connected,
             version="1.0.0"
         )
@@ -715,7 +733,7 @@ async def cleanup_database(user_name: Optional[str] = None):
             "propositions_deleted": propositions_deleted,
             "junction_records_deleted": junction_records_deleted,
             "fts_cleared": True,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": serialize_datetime(datetime.now(timezone.utc))
         }
         
     except Exception as e:
@@ -963,7 +981,7 @@ async def query_gum(request: QueryRequest):
                 text=prop.text,
                 reasoning=prop.reasoning,
                 confidence=prop.confidence,
-                created_at=parse_datetime(prop.created_at)
+                created_at=serialize_datetime(parse_datetime(prop.created_at))
             ))
         
         execution_time = (time.time() - start_time) * 1000
@@ -1020,7 +1038,7 @@ async def list_observations(
                     content=obs.content[:500] + "..." if len(obs.content) > 500 else obs.content,
                     content_type=obs.content_type,
                     observer_name=obs.observer_name,
-                    created_at=parse_datetime(obs.created_at)
+                    created_at=serialize_datetime(parse_datetime(obs.created_at))
                 ))
             
             logger.info(f"Retrieved {len(response)} observations")
@@ -1081,7 +1099,7 @@ async def list_propositions(
                     text=prop.text,
                     reasoning=prop.reasoning,
                     confidence=prop.confidence,
-                    created_at=parse_datetime(prop.created_at)
+                    created_at=serialize_datetime(parse_datetime(prop.created_at))
                 ))
             
             logger.info(f"Retrieved {len(response)} propositions")
@@ -1143,11 +1161,10 @@ async def get_propositions_by_hour(
 ):
     """Get propositions grouped by hour for the specified date."""
     try:
-        from datetime import datetime, timezone
-        
         # Parse date parameter or use today
         if date:
             try:
+                # Parse the date and ensure it's treated as local date
                 target_date = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError:
                 raise HTTPException(
@@ -1155,8 +1172,39 @@ async def get_propositions_by_hour(
                     detail="Invalid date format. Use YYYY-MM-DD"
                 )
         else:
+            # Use current local date instead of UTC date
             target_date = datetime.now().date()
         
+        # Convert local date to UTC date range
+        # Since the user selects a local date, we need to find the UTC date range
+        # that corresponds to their local date. For PDT (UTC-7), if they select 8/7/25,
+        # we need to query from 8/7/25 07:00 UTC to 8/8/25 06:59 UTC
+        # This accounts for the timezone offset
+        import pytz
+        from datetime import timedelta
+        
+        # Get user's timezone (assuming PDT for now, but this should be configurable)
+        user_tz = pytz.timezone('US/Pacific')  # This handles PDT/PST automatically
+        
+        # Create the start of the selected date in user's timezone
+        local_start = user_tz.localize(datetime.combine(target_date, datetime.min.time()))
+        local_end = user_tz.localize(datetime.combine(target_date, datetime.max.time()))
+        
+        # Convert to UTC
+        utc_start = local_start.astimezone(pytz.UTC)
+        utc_end = local_end.astimezone(pytz.UTC)
+        
+        logger.info(f"=== DATE CONVERSION DEBUG (PROPOSITIONS) ===")
+        logger.info(f"Input date string: {date}")
+        logger.info(f"Parsed target_date: {target_date}")
+        logger.info(f"User timezone: {user_tz}")
+        logger.info(f"Local start of day: {local_start}")
+        logger.info(f"Local end of day: {local_end}")
+        logger.info(f"UTC start: {utc_start}")
+        logger.info(f"UTC end: {utc_end}")
+        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
+        logger.info(f"Current local time: {datetime.now()}")
+        logger.info(f"=============================================")
         logger.info(f"Getting propositions by hour for date: {target_date}, confidence_min={confidence_min}")
         
         # Get GUM instance
@@ -1170,10 +1218,11 @@ async def get_propositions_by_hour(
             # Get current time to filter out future hours
             now = datetime.now(timezone.utc)
             
-            # Build base query for the target date
+            # Build base query for the target date using the calculated UTC range
             stmt = select(Proposition).where(
                 and_(
-                    func.date(Proposition.created_at) == target_date,
+                    Proposition.created_at >= utc_start,
+                    Proposition.created_at <= utc_end,
                     Proposition.created_at <= now  # Only past hours
                 )
             )
@@ -1188,21 +1237,22 @@ async def get_propositions_by_hour(
             result = await session.execute(stmt)
             propositions = result.scalars().all()
             
-            # Group propositions by hour
+            # Group propositions by hour (convert UTC to local time)
             hourly_groups = {}
             for prop in propositions:
-                # Extract hour from created_at
-                hour = prop.created_at.hour
-                if hour not in hourly_groups:
-                    hourly_groups[hour] = []
-                hourly_groups[hour].append(prop)
+                # Convert UTC time to local time for hour grouping
+                local_time = prop.created_at.astimezone(pytz.timezone('US/Pacific'))
+                local_hour = local_time.hour
+                if local_hour not in hourly_groups:
+                    hourly_groups[local_hour] = []
+                hourly_groups[local_hour].append(prop)
             
             # Format data for response
             hourly_data = []
             for hour in sorted(hourly_groups.keys()):
                 hour_props = hourly_groups[hour]
                 
-                # Format hour display (12 AM, 1 AM, etc.)
+                # Format hour display (12 AM, 1 AM, etc.) - now using local time
                 if hour == 0:
                     hour_display = "12 a.m."
                 elif hour < 12:
@@ -1221,7 +1271,7 @@ async def get_propositions_by_hour(
                             "id": prop.id,
                             "text": prop.text,
                             "confidence": prop.confidence,
-                            "created_at": parse_datetime(prop.created_at)
+                            "created_at": serialize_datetime(parse_datetime(prop.created_at))
                         }
                         for prop in hour_props
                     ]
@@ -2121,7 +2171,7 @@ async def global_exception_handler(request, exc):
         content=ErrorResponse(
             error="Internal server error",
             detail=str(exc),
-            timestamp=datetime.now()
+            timestamp=serialize_datetime(datetime.now(timezone.utc))
         ).dict()
     )
 
@@ -2182,11 +2232,10 @@ async def get_observations_by_hour(
 ):
     """Get raw observations grouped by hour for narrative timeline view."""
     try:
-        from datetime import datetime, timezone
-        
         # Parse date parameter or use today
         if date:
             try:
+                # Parse the date and ensure it's treated as local date
                 target_date = datetime.strptime(date, "%Y-%m-%d").date()
             except ValueError:
                 raise HTTPException(
@@ -2194,8 +2243,39 @@ async def get_observations_by_hour(
                     detail="Invalid date format. Use YYYY-MM-DD"
                 )
         else:
+            # Use current local date instead of UTC date
             target_date = datetime.now().date()
         
+        # Convert local date to UTC date range
+        # Since the user selects a local date, we need to find the UTC date range
+        # that corresponds to their local date. For PDT (UTC-7), if they select 8/7/25,
+        # we need to query from 8/7/25 07:00 UTC to 8/8/25 06:59 UTC
+        # This accounts for the timezone offset
+        import pytz
+        from datetime import timedelta
+        
+        # Get user's timezone (assuming PDT for now, but this should be configurable)
+        user_tz = pytz.timezone('US/Pacific')  # This handles PDT/PST automatically
+        
+        # Create the start of the selected date in user's timezone
+        local_start = user_tz.localize(datetime.combine(target_date, datetime.min.time()))
+        local_end = user_tz.localize(datetime.combine(target_date, datetime.max.time()))
+        
+        # Convert to UTC
+        utc_start = local_start.astimezone(pytz.UTC)
+        utc_end = local_end.astimezone(pytz.UTC)
+        
+        logger.info(f"=== DATE CONVERSION DEBUG (OBSERVATIONS) ===")
+        logger.info(f"Input date string: {date}")
+        logger.info(f"Parsed target_date: {target_date}")
+        logger.info(f"User timezone: {user_tz}")
+        logger.info(f"Local start of day: {local_start}")
+        logger.info(f"Local end of day: {local_end}")
+        logger.info(f"UTC start: {utc_start}")
+        logger.info(f"UTC end: {utc_end}")
+        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
+        logger.info(f"Current local time: {datetime.now()}")
+        logger.info(f"=============================================")
         logger.info(f"Getting observations by hour for date: {target_date}")
         
         # Get GUM instance
@@ -2209,10 +2289,11 @@ async def get_observations_by_hour(
             # Get current time to filter out future hours
             now = datetime.now(timezone.utc)
             
-            # Build base query for the target date
+            # Build base query for the target date using the calculated UTC range
             stmt = select(Observation).where(
                 and_(
-                    func.date(Observation.created_at) == target_date,
+                    Observation.created_at >= utc_start,
+                    Observation.created_at <= utc_end,
                     Observation.created_at <= now  # Only past hours
                 )
             )
@@ -2223,21 +2304,22 @@ async def get_observations_by_hour(
             result = await session.execute(stmt)
             observations = result.scalars().all()
             
-            # Group observations by hour
+            # Group observations by hour (convert UTC to local time)
             hourly_groups = {}
             for obs in observations:
-                # Extract hour from created_at
-                hour = obs.created_at.hour
-                if hour not in hourly_groups:
-                    hourly_groups[hour] = []
-                hourly_groups[hour].append(obs)
+                # Convert UTC time to local time for hour grouping
+                local_time = obs.created_at.astimezone(pytz.timezone('US/Pacific'))
+                local_hour = local_time.hour
+                if local_hour not in hourly_groups:
+                    hourly_groups[local_hour] = []
+                hourly_groups[local_hour].append(obs)
             
             # Format data for response
             hourly_data = []
             for hour in sorted(hourly_groups.keys()):
                 hour_obs = hourly_groups[hour]
                 
-                # Format hour display (12 AM, 1 AM, etc.)
+                # Format hour display (12 AM, 1 AM, etc.) - now using local time
                 if hour == 0:
                     hour_display = "12 a.m."
                 elif hour < 12:
@@ -2257,7 +2339,7 @@ async def get_observations_by_hour(
                             "content": obs.content,
                             "content_type": obs.content_type,
                             "observer_name": obs.observer_name,
-                            "created_at": parse_datetime(obs.created_at)
+                            "created_at": serialize_datetime(parse_datetime(obs.created_at))
                         }
                         for obs in hour_obs
                     ]
