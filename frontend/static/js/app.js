@@ -31,6 +31,9 @@ class ZavionApp {
         }
         this.theme = theme;
         
+        // Text shimmer management
+        this.textShimmerInstances = new Map();
+        
         this.init();
     }
 
@@ -765,6 +768,279 @@ class ZavionApp {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    // ========================================
+    // TEXT SHIMMER LOADING ANIMATION
+    // ========================================
+
+    /**
+     * Create a text shimmer element
+     * @param {string} text - The text to display
+     * @param {Object} options - Configuration options
+     * @param {string} options.element - HTML element type (default: 'span')
+     * @param {string} options.className - Additional CSS classes
+     * @param {number} options.duration - Animation duration in seconds (default: 2)
+     * @param {number} options.spread - Spread of the shimmer effect (default: 2)
+     * @param {string} options.color - Color variant ('blue', 'cyan', or default)
+     * @param {string} options.size - Size variant ('sm', 'lg', 'xl', or default)
+     * @param {boolean} options.mono - Use monospace font
+     * @param {boolean} options.fast - Use fast animation
+     * @param {boolean} options.slow - Use slow animation
+     * @returns {HTMLElement} The shimmer element
+     */
+    createTextShimmer(text, options = {}) {
+        const {
+            element = 'span',
+            className = '',
+            duration = 2,
+            spread = 2,
+            color = '',
+            size = '',
+            mono = false,
+            fast = false,
+            slow = false
+        } = options;
+
+        // Create the element
+        const shimmerElement = document.createElement(element);
+        shimmerElement.textContent = text;
+        shimmerElement.className = 'text-shimmer';
+
+        // Add color variant
+        if (color === 'blue') {
+            shimmerElement.classList.add('text-shimmer-blue');
+        } else if (color === 'cyan') {
+            shimmerElement.classList.add('text-shimmer-cyan');
+        }
+
+        // Add size variant
+        if (size === 'sm') {
+            shimmerElement.classList.add('text-shimmer-sm');
+        } else if (size === 'lg') {
+            shimmerElement.classList.add('text-shimmer-lg');
+        } else if (size === 'xl') {
+            shimmerElement.classList.add('text-shimmer-xl');
+        }
+
+        // Add font variant
+        if (mono) {
+            shimmerElement.classList.add('text-shimmer-mono');
+        }
+
+        // Add duration variant
+        if (fast) {
+            shimmerElement.classList.add('text-shimmer-fast');
+        } else if (slow) {
+            shimmerElement.classList.add('text-shimmer-slow');
+        }
+
+        // Add custom classes
+        if (className) {
+            shimmerElement.classList.add(...className.split(' '));
+        }
+
+        // Set custom duration if provided
+        if (duration !== 2) {
+            shimmerElement.style.animationDuration = `${duration}s`;
+        }
+
+        // Set custom spread if provided
+        if (spread !== 2) {
+            const dynamicSpread = text.length * spread;
+            shimmerElement.style.setProperty('--spread', `${dynamicSpread}px`);
+        }
+
+        return shimmerElement;
+    }
+
+    /**
+     * Show loading state with text shimmer
+     * @param {string|HTMLElement} target - Target element or selector
+     * @param {string} loadingText - Text to show while loading
+     * @param {Object} options - Shimmer options
+     * @returns {string} Original content for restoration
+     */
+    showLoadingShimmer(target, loadingText = 'Loading...', options = {}) {
+        const element = typeof target === 'string' ? document.querySelector(target) : target;
+        if (!element) return null;
+
+        // Store original content
+        const originalContent = element.innerHTML;
+        const originalText = element.textContent;
+
+        // Create shimmer element
+        const shimmerElement = this.createTextShimmer(loadingText, options);
+        
+        // Clear and add shimmer
+        element.innerHTML = '';
+        element.appendChild(shimmerElement);
+
+        // Store for restoration
+        const instanceId = `shimmer_${Date.now()}_${Math.random()}`;
+        this.textShimmerInstances.set(instanceId, {
+            element: element,
+            originalContent: originalContent,
+            originalText: originalText,
+            shimmerElement: shimmerElement
+        });
+
+        return instanceId;
+    }
+
+    /**
+     * Hide loading shimmer and restore original content
+     * @param {string} instanceId - Instance ID returned from showLoadingShimmer
+     */
+    hideLoadingShimmer(instanceId) {
+        const instance = this.textShimmerInstances.get(instanceId);
+        if (!instance) return;
+
+        const { element, originalContent } = instance;
+        
+        // Restore original content
+        element.innerHTML = originalContent;
+        
+        // Clean up
+        this.textShimmerInstances.delete(instanceId);
+    }
+
+    /**
+     * Show loading state for a button
+     * @param {string|HTMLElement} button - Button element or selector
+     * @param {string} loadingText - Text to show while loading
+     * @param {Object} options - Shimmer options
+     * @returns {string} Instance ID for restoration
+     */
+    showButtonLoading(button, loadingText = 'Loading...', options = {}) {
+        const buttonElement = typeof button === 'string' ? document.querySelector(button) : button;
+        if (!buttonElement) return null;
+
+        // Store original state
+        const originalText = buttonElement.textContent;
+        const originalDisabled = buttonElement.disabled;
+
+        // Disable button
+        buttonElement.disabled = true;
+        buttonElement.classList.add('loading');
+
+        // Create shimmer with button-specific options
+        const shimmerOptions = {
+            ...options,
+            className: 'btn-shimmer'
+        };
+        
+        const shimmerElement = this.createTextShimmer(loadingText, shimmerOptions);
+        
+        // Clear and add shimmer
+        buttonElement.innerHTML = '';
+        buttonElement.appendChild(shimmerElement);
+
+        // Store for restoration
+        const instanceId = `button_shimmer_${Date.now()}_${Math.random()}`;
+        this.textShimmerInstances.set(instanceId, {
+            element: buttonElement,
+            originalText: originalText,
+            originalDisabled: originalDisabled,
+            shimmerElement: shimmerElement,
+            type: 'button'
+        });
+
+        return instanceId;
+    }
+
+    /**
+     * Hide button loading state
+     * @param {string} instanceId - Instance ID returned from showButtonLoading
+     */
+    hideButtonLoading(instanceId) {
+        const instance = this.textShimmerInstances.get(instanceId);
+        if (!instance || instance.type !== 'button') return;
+
+        const { element, originalText, originalDisabled } = instance;
+        
+        // Restore original state
+        element.textContent = originalText;
+        element.disabled = originalDisabled;
+        element.classList.remove('loading');
+        
+        // Clean up
+        this.textShimmerInstances.delete(instanceId);
+    }
+
+    /**
+     * Show loading state for a card or container
+     * @param {string|HTMLElement} target - Target element or selector
+     * @param {string} loadingText - Text to show while loading
+     * @param {Object} options - Shimmer options
+     * @returns {string} Instance ID for restoration
+     */
+    showCardLoading(target, loadingText = 'Loading data...', options = {}) {
+        const element = typeof target === 'string' ? document.querySelector(target) : target;
+        if (!element) return null;
+
+        // Store original content
+        const originalContent = element.innerHTML;
+        
+        // Add loading class
+        element.classList.add('card-loading');
+
+        // Create loading container
+        const loadingContainer = document.createElement('div');
+        loadingContainer.className = 'loading-container';
+        loadingContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: var(--spacing-xxl);
+            text-align: center;
+        `;
+
+        // Add spinner
+        const spinner = document.createElement('div');
+        spinner.className = 'spinner';
+        loadingContainer.appendChild(spinner);
+
+        // Add shimmer text
+        const shimmerElement = this.createTextShimmer(loadingText, {
+            ...options,
+            className: 'mt-3'
+        });
+        loadingContainer.appendChild(shimmerElement);
+
+        // Replace content
+        element.innerHTML = '';
+        element.appendChild(loadingContainer);
+
+        // Store for restoration
+        const instanceId = `card_shimmer_${Date.now()}_${Math.random()}`;
+        this.textShimmerInstances.set(instanceId, {
+            element: element,
+            originalContent: originalContent,
+            shimmerElement: shimmerElement,
+            type: 'card'
+        });
+
+        return instanceId;
+    }
+
+    /**
+     * Hide card loading state
+     * @param {string} instanceId - Instance ID returned from showCardLoading
+     */
+    hideCardLoading(instanceId) {
+        const instance = this.textShimmerInstances.get(instanceId);
+        if (!instance || instance.type !== 'card') return;
+
+        const { element, originalContent } = instance;
+        
+        // Restore original content
+        element.innerHTML = originalContent;
+        element.classList.remove('card-loading');
+        
+        // Clean up
+        this.textShimmerInstances.delete(instanceId);
+    }
+
     // ===== PROPOSITIONS FUNCTIONALITY =====
 
     /**
@@ -827,11 +1103,20 @@ class ZavionApp {
         if (!contentContainer) return;
 
         try {
-            // Show loading state
+            // Show loading state with text shimmer
+            let buttonLoadingInstanceId = null;
             if (loadBtn) {
-                loadBtn.disabled = true;
-                loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+                buttonLoadingInstanceId = this.showButtonLoading(loadBtn, 'Loading insights...', {
+                    color: 'cyan',
+                    fast: true
+                });
             }
+
+            // Show card loading state
+            const cardLoadingInstanceId = this.showCardLoading(contentContainer, 'Loading insights...', {
+                color: 'cyan',
+                size: 'lg'
+            });
 
             // Get filter values
             const confidenceMin = document.getElementById('confidenceFilter')?.value || null;
@@ -868,6 +1153,12 @@ class ZavionApp {
             const countResponse = await fetch(`${this.apiBaseUrl}/propositions/count?${countParams}`);
             const countData = await countResponse.json();
 
+            // Hide loading states
+            if (buttonLoadingInstanceId) {
+                this.hideButtonLoading(buttonLoadingInstanceId);
+            }
+            this.hideCardLoading(cardLoadingInstanceId);
+
             // Display results
             this.displayPropositions(propositions, countData);
             this.updatePropositionsPagination(propositions.length, limit);
@@ -878,12 +1169,6 @@ class ZavionApp {
             console.error('Error loading propositions:', error);
             this.showToast(`Failed to load insights: ${error.message}`, 'error');
             this.displayEmptyPropositions();
-        } finally {
-            // Reset button state
-            if (loadBtn) {
-                loadBtn.disabled = false;
-                loadBtn.innerHTML = '<i class="fas fa-search"></i> Load Insights';
-            }
         }
     }
 
@@ -1187,11 +1472,20 @@ class ZavionApp {
         if (!contentContainer || !dateInput) return;
 
         try {
-            // Show loading state
+            // Show loading state with text shimmer
+            let buttonLoadingInstanceId = null;
             if (loadBtn) {
-                loadBtn.disabled = true;
-                loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+                buttonLoadingInstanceId = this.showButtonLoading(loadBtn, 'Loading timeline...', {
+                    color: 'cyan',
+                    fast: true
+                });
             }
+
+            // Show card loading state
+            const cardLoadingInstanceId = this.showCardLoading(contentContainer, 'Loading timeline...', {
+                color: 'cyan',
+                size: 'lg'
+            });
 
             // Get filter values
             const date = dateInput.value;
@@ -1215,6 +1509,12 @@ class ZavionApp {
 
             const timelineData = await response.json();
 
+            // Hide loading states
+            if (buttonLoadingInstanceId) {
+                this.hideButtonLoading(buttonLoadingInstanceId);
+            }
+            this.hideCardLoading(cardLoadingInstanceId);
+
             // Display results
             this.displayTimeline(timelineData);
 
@@ -1224,12 +1524,6 @@ class ZavionApp {
             console.error('Error loading timeline:', error);
             this.showToast(`Failed to load timeline: ${error.message}`, 'error');
             this.displayEmptyTimeline();
-        } finally {
-            // Reset button state
-            if (loadBtn) {
-                loadBtn.disabled = false;
-                loadBtn.innerHTML = '<i class="fas fa-clock"></i> Load Timeline';
-            }
         }
     }
 
@@ -1246,13 +1540,31 @@ class ZavionApp {
             return;
         }
 
-        // Format date for display
-        const displayDate = new Date(timelineData.date).toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
+        // Format date for display - ensure proper timezone handling
+        let displayDate;
+        try {
+            // timelineData.date is in format "2025-08-08" (date only)
+            // We need to create a proper date object for the user's local timezone
+            const [year, month, day] = timelineData.date.split('-').map(Number);
+            // Create date using UTC to avoid timezone conversion issues
+            const localDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0)); // month is 0-indexed, noon UTC
+            
+            displayDate = localDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            console.log('🔥🔥🔥 Date conversion debug:');
+            console.log('Input date string:', timelineData.date);
+            console.log('Parsed components:', { year, month, day });
+            console.log('Created local date object:', localDate);
+            console.log('Final display date:', displayDate);
+        } catch (error) {
+            console.error('Error formatting date:', error);
+            displayDate = 'Invalid Date';
+        }
 
         contentContainer.innerHTML = `
             <div class="timeline-date-header">
@@ -1416,11 +1728,20 @@ class ZavionApp {
         if (!contentContainer || !dateInput) return;
 
         try {
-            // Show loading state
+            // Show loading state with text shimmer
+            let buttonLoadingInstanceId = null;
             if (loadBtn) {
-                loadBtn.disabled = true;
-                loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+                buttonLoadingInstanceId = this.showButtonLoading(loadBtn, 'Loading timeline...', {
+                    color: 'cyan',
+                    fast: true
+                });
             }
+
+            // Show card loading state
+            const cardLoadingInstanceId = this.showCardLoading(contentContainer, 'Loading narrative timeline...', {
+                color: 'cyan',
+                size: 'lg'
+            });
 
             // Get date value
             const date = dateInput.value;
@@ -1434,6 +1755,12 @@ class ZavionApp {
 
             const timelineData = await response.json();
 
+            // Hide loading states
+            if (buttonLoadingInstanceId) {
+                this.hideButtonLoading(buttonLoadingInstanceId);
+            }
+            this.hideCardLoading(cardLoadingInstanceId);
+
             // Display results
             this.displayNarrativeTimeline(timelineData);
 
@@ -1443,12 +1770,6 @@ class ZavionApp {
             console.error('Error loading narrative timeline:', error);
             this.showToast(`Failed to load narrative timeline: ${error.message}`, 'error');
             this.displayEmptyNarrativeTimeline();
-        } finally {
-            // Reset button state
-            if (loadBtn) {
-                loadBtn.disabled = false;
-                loadBtn.innerHTML = '<i class="fas fa-list-alt"></i> Load Timeline';
-            }
         }
     }
 
@@ -1465,13 +1786,31 @@ class ZavionApp {
             return;
         }
 
-        // Format date for display
-        const displayDate = new Date(timelineData.date).toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
+        // Format date for display - ensure proper timezone handling
+        let displayDate;
+        try {
+            // timelineData.date is in format "2025-08-08" (date only)
+            // We need to create a proper date object for the user's local timezone
+            const [year, month, day] = timelineData.date.split('-').map(Number);
+            // Create date using UTC to avoid timezone conversion issues
+            const localDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0)); // month is 0-indexed, noon UTC
+            
+            displayDate = localDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            
+            console.log('🔥🔥🔥 Narrative Timeline Date conversion debug:');
+            console.log('Input date string:', timelineData.date);
+            console.log('Parsed components:', { year, month, day });
+            console.log('Created local date object:', localDate);
+            console.log('Final display date:', displayDate);
+        } catch (error) {
+            console.error('Error formatting narrative timeline date:', error);
+            displayDate = 'Invalid Date';
+        }
 
         contentContainer.innerHTML = `
             <div class="narrative-timeline-date-header">
@@ -1784,6 +2123,127 @@ class ZavionApp {
     }
 
 
+}
+
+// ========================================
+// TEXT SHIMMER DEMO FUNCTIONS
+// ========================================
+
+// Demo functions for the home page shimmer demo
+function demoBasicShimmer() {
+    const demoArea = document.getElementById('shimmerDemoArea');
+    if (!demoArea || !window.zavionApp) return;
+
+    const shimmerElement = window.zavionApp.createTextShimmer('This is a basic text shimmer effect...', {
+        color: 'cyan',
+        size: 'lg'
+    });
+
+    demoArea.innerHTML = '';
+    demoArea.appendChild(shimmerElement);
+
+    // Auto-clear after 3 seconds
+    setTimeout(() => {
+        demoArea.innerHTML = '<p style="color: var(--text-muted); text-align: center; margin: 0;">Demo area - click buttons above to see shimmer effects</p>';
+    }, 3000);
+}
+
+function demoButtonLoading() {
+    const demoArea = document.getElementById('shimmerDemoArea');
+    if (!demoArea || !window.zavionApp) return;
+
+    // Create a demo button
+    const demoButton = document.createElement('button');
+    demoButton.className = 'btn-primary';
+    demoButton.innerHTML = '<i class="fas fa-rocket"></i> Launch Action';
+    demoButton.style.marginBottom = '1rem';
+
+    demoArea.innerHTML = '';
+    demoArea.appendChild(demoButton);
+
+    // Show loading state
+    const loadingInstanceId = window.zavionApp.showButtonLoading(demoButton, 'Processing...', {
+        color: 'cyan',
+        fast: true
+    });
+
+    // Hide loading state after 2 seconds
+    setTimeout(() => {
+        window.zavionApp.hideButtonLoading(loadingInstanceId);
+    }, 2000);
+}
+
+function demoCardLoading() {
+    const demoArea = document.getElementById('shimmerDemoArea');
+    if (!demoArea || !window.zavionApp) return;
+
+    // Create demo content
+    demoArea.innerHTML = `
+        <div style="padding: 1rem; background: var(--bg-card); border-radius: var(--border-radius); border: 1px solid var(--border-light);">
+            <h4 style="margin: 0 0 0.5rem 0; color: var(--text-primary);">Sample Card Content</h4>
+            <p style="margin: 0; color: var(--text-secondary);">This is some sample content that will be replaced with a loading state.</p>
+        </div>
+    `;
+
+    // Show loading state
+    const loadingInstanceId = window.zavionApp.showCardLoading(demoArea, 'Loading card data...', {
+        color: 'cyan',
+        size: 'lg'
+    });
+
+    // Hide loading state after 3 seconds
+    setTimeout(() => {
+        window.zavionApp.hideCardLoading(loadingInstanceId);
+    }, 3000);
+}
+
+function demoColorVariants() {
+    const demoArea = document.getElementById('shimmerDemoArea');
+    if (!demoArea || !window.zavionApp) return;
+
+    demoArea.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div>
+                <strong style="color: var(--text-primary);">Default Shimmer:</strong>
+                <div id="defaultShimmer"></div>
+            </div>
+            <div>
+                <strong style="color: var(--text-primary);">Blue Shimmer:</strong>
+                <div id="blueShimmer"></div>
+            </div>
+            <div>
+                <strong style="color: var(--text-primary);">Cyan Shimmer:</strong>
+                <div id="cyanShimmer"></div>
+            </div>
+            <div>
+                <strong style="color: var(--text-primary);">Fast Animation:</strong>
+                <div id="fastShimmer"></div>
+            </div>
+            <div>
+                <strong style="color: var(--text-primary);">Monospace Font:</strong>
+                <div id="monoShimmer"></div>
+            </div>
+        </div>
+    `;
+
+    // Create different shimmer variants
+    const defaultShimmer = window.zavionApp.createTextShimmer('Default shimmer effect...');
+    const blueShimmer = window.zavionApp.createTextShimmer('Blue shimmer variant...', { color: 'blue' });
+    const cyanShimmer = window.zavionApp.createTextShimmer('Cyan shimmer variant...', { color: 'cyan' });
+    const fastShimmer = window.zavionApp.createTextShimmer('Fast animation...', { fast: true });
+    const monoShimmer = window.zavionApp.createTextShimmer('Monospace font...', { mono: true, color: 'cyan' });
+
+    // Add to demo area
+    document.getElementById('defaultShimmer').appendChild(defaultShimmer);
+    document.getElementById('blueShimmer').appendChild(blueShimmer);
+    document.getElementById('cyanShimmer').appendChild(cyanShimmer);
+    document.getElementById('fastShimmer').appendChild(fastShimmer);
+    document.getElementById('monoShimmer').appendChild(monoShimmer);
+
+    // Auto-clear after 5 seconds
+    setTimeout(() => {
+        demoArea.innerHTML = '<p style="color: var(--text-muted); text-align: center; margin: 0;">Demo area - click buttons above to see shimmer effects</p>';
+    }, 5000);
 }
 
 // Initialize application when DOM is loaded

@@ -3074,3 +3074,122 @@ textarea:focus-visible {
         align-items: flex-start;
     }
 }
+
+/* ========================================
+   TEXT SHIMMER LOADING ANIMATION
+======================================== */
+
+/* Text Shimmer Component */
+.text-shimmer {
+  position: relative;
+  display: inline-block;
+  background: linear-gradient(90deg, 
+    transparent calc(50% - var(--spread, 20px)), 
+    var(--base-gradient-color, #0891b2), 
+    transparent calc(50% + var(--spread, 20px))
+  ), 
+  linear-gradient(var(--base-color, #6c757d), var(--base-color, #6c757d));
+  background-size: 250% 100%, auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  background-repeat: no-repeat, padding-box;
+  animation: shimmer 2s linear infinite;
+}
+
+/* Dark mode support */
+[data-theme="dark"] .text-shimmer {
+  --base-color: #71717a;
+  --base-gradient-color: #ffffff;
+}
+
+/* Custom color variants */
+.text-shimmer.text-shimmer-blue {
+  --base-color: #2563eb;
+  --base-gradient-color: #93c5fd;
+}
+
+[data-theme="dark"] .text-shimmer.text-shimmer-blue {
+  --base-color: #1d4ed8;
+  --base-gradient-color: #60a5fa;
+}
+
+.text-shimmer.text-shimmer-cyan {
+  --base-color: #0891b2;
+  --base-gradient-color: #67e8f9;
+}
+
+[data-theme="dark"] .text-shimmer.text-shimmer-cyan {
+  --base-color: #0e7490;
+  --base-gradient-color: #22d3ee;
+}
+
+/* Animation keyframes */
+@keyframes shimmer {
+  0% {
+    background-position: 100% center;
+  }
+  100% {
+    background-position: 0% center;
+  }
+}
+
+/* Duration variants */
+.text-shimmer.text-shimmer-fast {
+  animation-duration: 1s;
+}
+
+.text-shimmer.text-shimmer-slow {
+  animation-duration: 3s;
+}
+
+/* Font variants */
+.text-shimmer.text-shimmer-mono {
+  font-family: var(--font-family-mono);
+}
+
+.text-shimmer.text-shimmer-sm {
+  font-size: var(--font-size-sm);
+}
+
+.text-shimmer.text-shimmer-lg {
+  font-size: var(--font-size-lg);
+}
+
+.text-shimmer.text-shimmer-xl {
+  font-size: var(--font-size-xl);
+}
+
+/* Loading states for existing components */
+.loading-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.loading-text .text-shimmer {
+  margin-left: var(--spacing-xs);
+}
+
+/* Button loading state */
+.btn.loading .text-shimmer {
+  --base-color: currentColor;
+  --base-gradient-color: rgba(255, 255, 255, 0.8);
+}
+
+.btn-secondary.loading .text-shimmer {
+  --base-color: var(--text-primary);
+  --base-gradient-color: var(--brand-cyan);
+}
+
+/* Card loading state */
+.card-loading .text-shimmer {
+  --base-color: var(--text-secondary);
+  --base-gradient-color: var(--brand-cyan);
+}
+
+/* Empty state loading */
+.empty-state.loading .text-shimmer {
+  --base-color: var(--text-muted);
+  --base-gradient-color: var(--brand-cyan);
+}
