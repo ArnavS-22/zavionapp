@@ -135,33 +135,3 @@ async def azure_text_completion(
     """
     client = await get_azure_text_client()
     return await client.chat_completion(messages, max_tokens, temperature)
-
-
-async def test_azure_text_client():
-    """Test the Azure OpenAI text client."""
-    
-    print("Testing Azure OpenAI Text Client...")
-    
-    test_messages = [
-        {"role": "user", "content": "Hello! Please respond with exactly 'Azure OpenAI text working correctly'."}
-    ]
-    
-    try:
-        response = await azure_text_completion(
-            messages=test_messages,
-            max_tokens=20,
-            temperature=0.0
-        )
-        print(f"Azure OpenAI Text Success: {response}")
-        return True
-    except Exception as e:
-        print(f"Azure OpenAI Text Failed: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    success = asyncio.run(test_azure_text_client())
-    if success:
-        print("Azure OpenAI text client is working!")
-    else:
-        print("Azure OpenAI text client has issues.")

@@ -93,56 +93,13 @@ ai_client: Optional[UnifiedAIClient] = None
 
 
 async def get_ai_client() -> UnifiedAIClient:
-    """Get the unified AI client for both text and vision tasks."""
-    global ai_client
-    
-    if ai_client is None:
+    """Get or create the unified AI client."""
+    if not hasattr(get_ai_client, '_client'):
         logger.info("Initializing unified AI client")
         ai_client = UnifiedAIClient()
-        
-        # Store original methods
-        original_text_completion = ai_client.text_completion
-        original_vision_completion = ai_client.vision_completion
-        
-        # Create debug wrapper for text completion
-        async def debug_text_completion(*args, **kwargs):
-            logger.info("Text completion call starting...")
-            logger.info(f"   Args count: {len(args)}")
-            logger.info(f"   Kwargs: {list(kwargs.keys())}")
-            try:
-                response = await original_text_completion(*args, **kwargs)
-                logger.info("Text completion response received:")
-                logger.info(f"   Response type: {type(response)}")
-                logger.info(f"   Response length: {len(str(response)) if response else 0}")
-                logger.info(f"   Response preview: {str(response)[:200]}...")
-                return response
-            except Exception as e:
-                logger.error(f"Text completion error: {type(e).__name__}: {str(e)}")
-                raise
-
-        # Create debug wrapper for vision completion
-        async def debug_vision_completion(*args, **kwargs):
-            logger.info("Vision completion call starting...")
-            logger.info(f"   Args count: {len(args)}")
-            logger.info(f"   Kwargs: {list(kwargs.keys())}")
-            try:
-                response = await original_vision_completion(*args, **kwargs)
-                logger.info("Vision completion response received:")
-                logger.info(f"   Response type: {type(response)}")
-                logger.info(f"   Response length: {len(str(response)) if response else 0}")
-                logger.info(f"   Response preview: {str(response)[:200]}...")
-                return response
-            except Exception as e:
-                logger.error(f"Vision completion error: {type(e).__name__}: {str(e)}")
-                raise
-        
-        # Replace methods with debug versions
-        ai_client.text_completion = debug_text_completion
-        ai_client.vision_completion = debug_vision_completion
-        
-        logger.info("Unified AI client initialized with debug logging")
+        get_ai_client._client = ai_client
     
-    return ai_client
+    return get_ai_client._client
 
 # === Pydantic Models ===
 
@@ -1203,17 +1160,6 @@ async def get_propositions_by_hour(
         utc_start = local_start.astimezone(pytz.UTC)
         utc_end = local_end.astimezone(pytz.UTC)
         
-        logger.info(f"=== DATE CONVERSION DEBUG (PROPOSITIONS) ===")
-        logger.info(f"Input date string: {date}")
-        logger.info(f"Parsed target_date: {target_date}")
-        logger.info(f"User timezone: {user_tz}")
-        logger.info(f"Local start of day: {local_start}")
-        logger.info(f"Local end of day: {local_end}")
-        logger.info(f"UTC start: {utc_start}")
-        logger.info(f"UTC end: {utc_end}")
-        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
-        logger.info(f"Current local time: {datetime.now()}")
-        logger.info(f"=============================================")
         logger.info(f"Getting propositions by hour for date: {target_date}, confidence_min={confidence_min}")
         
         # Get GUM instance
@@ -1343,18 +1289,6 @@ async def generate_self_reflection(
         # Convert to UTC
         utc_start = local_start.astimezone(pytz.UTC)
         utc_end = local_end.astimezone(pytz.UTC)
-        
-        logger.info(f"=== DATE CONVERSION DEBUG (SELF-REFLECTION) ===")
-        logger.info(f"Input date string: {date}")
-        logger.info(f"Parsed target_date: {target_date}")
-        logger.info(f"User timezone: {user_tz}")
-        logger.info(f"Local start of day: {local_start}")
-        logger.info(f"Local end of day: {local_end}")
-        logger.info(f"UTC start: {utc_start}")
-        logger.info(f"UTC end: {utc_end}")
-        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
-        logger.info(f"Current local time: {datetime.now()}")
-        logger.info(f"=============================================")
         
         # Query propositions for the date
         async with gum_inst._session() as session:
@@ -1597,19 +1531,19 @@ Frame analyses:
 
 Please generate insights in the following JSON format:
 {{
-    "key_insights": [
+            "key_insights": [
         "Insight 1 about user behavior",
         "Insight 2 about user behavior",
         "Insight 3 about user behavior"
-    ],
-    "behavior_patterns": [
+            ],
+            "behavior_patterns": [
         "Pattern 1 observed",
         "Pattern 2 observed",
         "Pattern 3 observed"
     ],
     "summary": "2-3 sentence summary of the overall behavioral analysis",
     "confidence_score": 0.8,
-    "recommendations": [
+            "recommendations": [
         "Recommendation 1",
         "Recommendation 2",
         "Recommendation 3"
@@ -2560,110 +2494,4 @@ async def get_observations_by_hour(
             detail=f"Error getting observations by hour: {str(e)}"
         )
 
-@app.get("/debug/propositions/{date}", response_model=dict)
-async def debug_propositions_for_date(
-    date: str,
-    user_name: Optional[str] = None
-):
-    """Debug endpoint to check what propositions exist for a specific date."""
-    try:
-        # Parse date parameter
-        try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid date format. Use YYYY-MM-DD"
-            )
-        
-        logger.info(f"Debugging propositions for {user_name} on {target_date}")
-        
-        # Get GUM instance
-        gum_inst = await ensure_gum_instance(user_name)
-        
-        # Convert local date to UTC date range using the same approach as propositions/by-hour
-        import pytz
-        from datetime import timedelta
-        
-        # Get user's timezone (assuming PDT for now, but this should be configurable)
-        user_tz = pytz.timezone('US/Pacific')  # This handles PDT/PST automatically
-        
-        # Create the start of the selected date in user's timezone
-        local_start = user_tz.localize(datetime.combine(target_date, datetime.min.time()))
-        local_end = user_tz.localize(datetime.combine(target_date, datetime.max.time()))
-        
-        # Convert to UTC
-        utc_start = local_start.astimezone(pytz.UTC)
-        utc_end = local_end.astimezone(pytz.UTC)
-        
-        logger.info(f"=== DEBUG DATE CONVERSION ===")
-        logger.info(f"Input date string: {date}")
-        logger.info(f"Parsed target_date: {target_date}")
-        logger.info(f"User timezone: {user_tz}")
-        logger.info(f"Local start of day: {local_start}")
-        logger.info(f"Local end of day: {local_end}")
-        logger.info(f"UTC start: {utc_start}")
-        logger.info(f"UTC end: {utc_end}")
-        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
-        logger.info(f"Current local time: {datetime.now()}")
-        logger.info(f"=============================")
-        
-        # Query propositions for the date
-        async with gum_inst._session() as session:
-            from gum.models import Proposition
-            from sqlalchemy import select, and_
-            
-            # Get current time to filter out future hours
-            now = datetime.now(timezone.utc)
-            
-            # Build base query for the target date using the calculated UTC range
-            stmt = select(Proposition).where(
-                and_(
-                    Proposition.created_at >= utc_start,
-                    Proposition.created_at <= utc_end,
-                    Proposition.created_at <= now  # Only past hours
-                )
-            )
-            
-            # Order by creation time
-            stmt = stmt.order_by(Proposition.created_at)
-            
-            result = await session.execute(stmt)
-            propositions = result.scalars().all()
-            
-            logger.info(f"Found {len(propositions)} propositions for {target_date}")
-            
-            # Prepare debug data
-            debug_data = {
-                "date": date,
-                "target_date": str(target_date),
-                "user_timezone": str(user_tz),
-                "local_start": str(local_start),
-                "local_end": str(local_end),
-                "utc_start": str(utc_start),
-                "utc_end": str(utc_end),
-                "current_utc": str(datetime.now(timezone.utc)),
-                "current_local": str(datetime.now()),
-                "propositions_found": len(propositions),
-                "propositions": []
-            }
-            
-            # Add proposition details
-            for prop in propositions:
-                debug_data["propositions"].append({
-                    "id": prop.id,
-                    "text": prop.text[:100] + "..." if len(prop.text) > 100 else prop.text,
-                    "confidence": prop.confidence,
-                    "created_at": str(prop.created_at),
-                    "created_at_utc": str(prop.created_at.astimezone(pytz.UTC)) if prop.created_at.tzinfo else str(prop.created_at),
-                    "created_at_local": str(prop.created_at.astimezone(user_tz)) if prop.created_at.tzinfo else str(prop.created_at)
-                })
-            
-            return debug_data
-        
-    except Exception as e:
-        logger.error(f"Error debugging propositions: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error debugging propositions: {str(e)}"
-        )
+

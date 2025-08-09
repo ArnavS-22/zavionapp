@@ -141,33 +141,3 @@ async def openai_text_completion(
     """
     client = await get_openai_text_client()
     return await client.chat_completion(messages, max_tokens, temperature)
-
-
-async def test_openai_text_client():
-    """Test the OpenAI text client."""
-    
-    print("Testing OpenAI Text Client...")
-    
-    test_messages = [
-        {"role": "user", "content": "Hello! Please respond with exactly 'OpenAI text working correctly'."}
-    ]
-    
-    try:
-        response = await openai_text_completion(
-            messages=test_messages,
-            max_tokens=20,
-            temperature=0.0
-        )
-        print(f"OpenAI Text Success: {response}")
-        return True
-    except Exception as e:
-        print(f"OpenAI Text Failed: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    success = asyncio.run(test_openai_text_client())
-    if success:
-        print("OpenAI text client is working!")
-    else:
-        print("OpenAI text client has issues.")

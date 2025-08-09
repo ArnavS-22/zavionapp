@@ -1537,12 +1537,6 @@ class ZavionApp {
                 month: 'long',
                 day: 'numeric'
             });
-            
-            console.log('🔥🔥🔥 Date conversion debug:');
-            console.log('Input date string:', timelineData.date);
-            console.log('Parsed components:', { year, month, day });
-            console.log('Created local date object:', localDate);
-            console.log('Final display date:', displayDate);
         } catch (error) {
             console.error('Error formatting date:', error);
             displayDate = 'Invalid Date';
@@ -1806,12 +1800,6 @@ class ZavionApp {
                 month: 'long',
                 day: 'numeric'
             });
-            
-            console.log('🔥🔥🔥 Narrative Timeline Date conversion debug:');
-            console.log('Input date string:', timelineData.date);
-            console.log('Parsed components:', { year, month, day });
-            console.log('Created local date object:', localDate);
-            console.log('Final display date:', displayDate);
         } catch (error) {
             console.error('Error formatting narrative timeline date:', error);
             displayDate = 'Invalid Date';

@@ -1428,11 +1428,10 @@ textarea:focus-visible {
 }
 
 .tab-button.active {
-    background: var(--brand-gradient);
-    color: var(--text-white);
-    font-weight: 600;
-    box-shadow: var(--shadow-lg);
-    border-bottom: 3px solid var(--brand-secondary);
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--brand-primary);
+    border-bottom: 3px solid var(--brand-primary);
+    backdrop-filter: var(--backdrop-blur);
 }
 
 .tab-button.active::before {
@@ -1442,7 +1441,7 @@ textarea:focus-visible {
     left: 0;
     right: 0;
     height: 3px;
-    background: var(--brand-gradient);
+    background: var(--brand-primary);
     border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
 }
 
@@ -1456,7 +1455,7 @@ textarea:focus-visible {
 }
 
 .tab-button.active i {
-    color: var(--brand-cyan);
+    color: var(--brand-primary);
 }
 
 /* Tab Panels */
@@ -1559,7 +1558,9 @@ textarea:focus-visible {
 
 
 [data-theme="dark"] .tab-button.active {
-    background: var(--dark-mode-bg-color);
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--brand-primary);
+    border-bottom: 3px solid var(--brand-primary);
 }
 
 [data-theme="dark"] .tabs-navigation {
