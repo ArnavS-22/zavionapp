@@ -71,6 +71,30 @@ class RelationSchema(BaseModel):
         }
     )
 
+class SpecificInsight(BaseModel):
+    """
+    Represents a specific, actionable insight about user behavior.
+    """
+    insight: str = Field(..., description="Specific insight about user behavior")
+    action: str = Field(..., description="Actionable suggestion")
+    confidence: int = Field(..., ge=1, le=10, description="Confidence score from 1-10")
+    category: Literal["productivity", "focus", "communication", "learning", "time_management"] = Field(
+        ..., description="Category of the insight"
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+class SelfReflectionResponse(BaseModel):
+    """
+    Response model for self-reflection generation.
+    """
+    behavioral_pattern: str = Field(..., description="2-3 paragraph overview of overall behavioral pattern")
+    specific_insights: List[SpecificInsight] = Field(..., description="List of specific, actionable insights")
+    data_points: int = Field(..., description="Number of propositions analyzed")
+    generated_at: str = Field(..., description="When the reflection was generated (ISO format)")
+
+    model_config = ConfigDict(extra="forbid")
+
 def get_schema(json_schema):
     return {
         "type": "json_schema",

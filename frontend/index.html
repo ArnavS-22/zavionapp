@@ -32,6 +32,10 @@
                         <i class="fas fa-list-alt"></i>
                         <span>Narrative Timeline</span>
                     </button>
+                    <button class="tab-button" id="selfReflectionTab" data-tab="self-reflection" role="tab" aria-selected="false" aria-controls="self-reflection-panel">
+                        <i class="fas fa-mirror"></i>
+                        <span>Self Reflection</span>
+                    </button>
                 </nav>
             </div>
         </section>
@@ -191,6 +195,47 @@
                             <i class="fas fa-list-alt" aria-hidden="true"></i>
                             <h3>No narrative timeline data</h3>
                             <p>Select a date and click "Load Timeline" to view your raw activities</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Self Reflection Tab -->
+            <div class="tab-panel" id="self-reflection-panel" role="tabpanel" aria-labelledby="selfReflectionTab">
+                <div class="card-header">
+                    <h2>
+                        <i class="fas fa-mirror"></i>
+                        Self Reflection
+                    </h2>
+                    <p>Generate AI-powered behavioral summaries and actionable insights for your day</p>
+                    <div class="header-actions">
+                        <div class="filter-group">
+                            <label for="reflectionDate">Date:</label>
+                            <input type="date" id="reflectionDate" class="date-input">
+                        </div>
+                        <div class="filter-group">
+                            <label for="reflectionConfidenceFilter">Min Confidence:</label>
+                            <select id="reflectionConfidenceFilter">
+                                <option value="">All</option>
+                                <option value="5">5+</option>
+                                <option value="7">7+</option>
+                                <option value="8">8+</option>
+                                <option value="9">9+</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" id="generateReflection">
+                            <i class="fas fa-magic" aria-hidden="true"></i>
+                            Generate Summary
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="self-reflection-section">
+                    <div class="self-reflection-content" id="selfReflectionContent">
+                        <div class="empty-state">
+                            <i class="fas fa-mirror" aria-hidden="true"></i>
+                            <h3>No reflection generated</h3>
+                            <p>Select a date and click "Generate Summary" to create a behavioral reflection</p>
                         </div>
                     </div>
                 </div>

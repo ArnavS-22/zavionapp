@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 from asyncio import Semaphore
 import pytz
+import json
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status, Request
@@ -35,7 +36,15 @@ from rate_limiter import rate_limiter
 
 from dotenv import load_dotenv
 from gum import gum
-from gum.schemas import Update
+from gum.schemas import (
+    PropositionItem,
+    PropositionSchema,
+    RelationSchema,
+    Update,
+    AuditSchema,
+    SelfReflectionResponse,
+    SpecificInsight
+)
 from gum.observers import Observer
 from unified_ai_client import UnifiedAIClient
 
@@ -1270,6 +1279,7 @@ async def get_propositions_by_hour(
                         {
                             "id": prop.id,
                             "text": prop.text,
+                            "reasoning": prop.reasoning,
                             "confidence": prop.confidence,
                             "created_at": serialize_datetime(parse_datetime(prop.created_at))
                         }
@@ -1277,16 +1287,13 @@ async def get_propositions_by_hour(
                     ]
                 })
             
-            logger.info(f"Retrieved {len(hourly_data)} hourly groups for {target_date}")
             return {
-                "date": target_date.isoformat(),
-                "hourly_groups": hourly_data,
+                "date": target_date.strftime("%Y-%m-%d"),
                 "total_hours": len(hourly_data),
-                "total_propositions": sum(len(group["propositions"]) for group in hourly_data)
+                "total_propositions": len(propositions),
+                "hourly_groups": hourly_data
             }
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error getting propositions by hour: {e}")
         raise HTTPException(
@@ -1295,220 +1302,413 @@ async def get_propositions_by_hour(
         )
 
 
-async def generate_video_insights(frame_analyses: List[str], filename: str, user_name: str = None) -> dict:
-    """
-    Generate structured insights from existing GUM observations and propositions.
-    
-    Args:
-        frame_analyses: List of AI analysis texts from processed frames (for context)
-        filename: Name of the video file for context
-        user_name: User name to query specific data
-        
-    Returns:
-        Dictionary containing structured insights from existing GUM data:
-        {
-            "key_insights": List[str] (from recent observations),
-            "behavior_patterns": List[str] (from recent propositions), 
-            "summary": str,
-            "confidence_score": float,
-            "recommendations": List[str]
-        }
-    """
+@app.post("/propositions/reflection/generate", response_model=SelfReflectionResponse)
+async def generate_self_reflection(
+    date: Optional[str] = None,
+    user_name: Optional[str] = None,
+    confidence_min: Optional[int] = None
+):
+    """Generate a self-reflection summary based on behavioral insights for a specific date."""
     try:
-        logger.info(f"Generating insights from existing GUM data for {filename}")
+        # Parse date parameter or use today
+        if date:
+            try:
+                # Parse the date and ensure it's treated as local date
+                target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid date format. Use YYYY-MM-DD"
+                )
+        else:
+            # Use current local date instead of UTC date
+            target_date = datetime.now().date()
         
-        # Get GUM instance to query existing data
+        logger.info(f"Generating self-reflection for {user_name} on {target_date}")
+        
+        # Get GUM instance
         gum_inst = await ensure_gum_instance(user_name)
         
-        # Query recent observations related to video analysis
+        # Convert local date to UTC date range using the same approach as propositions/by-hour
+        import pytz
+        from datetime import timedelta
+        
+        # Get user's timezone (assuming PDT for now, but this should be configurable)
+        user_tz = pytz.timezone('US/Pacific')  # This handles PDT/PST automatically
+        
+        # Create the start of the selected date in user's timezone
+        local_start = user_tz.localize(datetime.combine(target_date, datetime.min.time()))
+        local_end = user_tz.localize(datetime.combine(target_date, datetime.max.time()))
+        
+        # Convert to UTC
+        utc_start = local_start.astimezone(pytz.UTC)
+        utc_end = local_end.astimezone(pytz.UTC)
+        
+        logger.info(f"=== DATE CONVERSION DEBUG (SELF-REFLECTION) ===")
+        logger.info(f"Input date string: {date}")
+        logger.info(f"Parsed target_date: {target_date}")
+        logger.info(f"User timezone: {user_tz}")
+        logger.info(f"Local start of day: {local_start}")
+        logger.info(f"Local end of day: {local_end}")
+        logger.info(f"UTC start: {utc_start}")
+        logger.info(f"UTC end: {utc_end}")
+        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
+        logger.info(f"Current local time: {datetime.now()}")
+        logger.info(f"=============================================")
+        
+        # Query propositions for the date
         async with gum_inst._session() as session:
-            from sqlalchemy import select, desc
-            from gum.models import Observation, Proposition
+            from gum.models import Proposition
+            from sqlalchemy import select, and_
             
-            # Get recent observations from video processing (last 10)
-            obs_stmt = (
-                select(Observation)
-                .where(Observation.content.contains("Video frame analysis"))
-                .order_by(desc(Observation.created_at))
-                .limit(10)
-            )
-            obs_result = await session.execute(obs_stmt)
-            observations = obs_result.scalars().all()
+            # Get current time to filter out future hours
+            now = datetime.now(timezone.utc)
             
-            # Get recent propositions (last 10) 
-            prop_stmt = (
-                select(Proposition)
-                .order_by(desc(Proposition.created_at))
-                .limit(10)
+            # Build base query for the target date using the calculated UTC range
+            stmt = select(Proposition).where(
+                and_(
+                    Proposition.created_at >= utc_start,
+                    Proposition.created_at <= utc_end,
+                    Proposition.created_at <= now  # Only past hours
+                )
             )
-            prop_result = await session.execute(prop_stmt)
-            propositions = prop_result.scalars().all()
-        
-        # Extract key insights from the latest 5 observations in the database
-        key_insights = []
-        
-        logger.info(f"Extracting latest 5 observations from database")
-        
-        # Get the latest 5 observations directly from the database
-        async with gum_inst._session() as session:
-            latest_obs_stmt = (
-                select(Observation)
-                .order_by(desc(Observation.created_at))
-                .limit(5)
+            
+            # Apply confidence filter if specified
+            if confidence_min is not None:
+                stmt = stmt.where(Proposition.confidence >= confidence_min)
+            
+            # Order by creation time
+            stmt = stmt.order_by(Proposition.created_at)
+            
+            result = await session.execute(stmt)
+            propositions = result.scalars().all()
+            
+            logger.info(f"Found {len(propositions)} propositions for {target_date}")
+            
+            if not propositions:
+                # Return empty reflection if no data
+                logger.info("No propositions found for the selected date")
+                return SelfReflectionResponse(
+                    behavioral_pattern="No behavioral data available for this date. Try selecting a different date or check if you have any observations recorded.",
+                    specific_insights=[],
+                    data_points=0,
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
+            
+            # Prepare propositions data for AI analysis
+            propositions_data = []
+            for prop in propositions:
+                propositions_data.append({
+                    "id": prop.id,
+                    "text": prop.text,
+                    "reasoning": prop.reasoning,
+                    "confidence": prop.confidence,
+                    "created_at": serialize_datetime(parse_datetime(prop.created_at))
+                })
+            
+            logger.info(f"Prepared {len(propositions_data)} propositions for self-reflection analysis")
+            
+            # Create the prompt for self-reflection generation
+            from gum.prompts.gum import SELF_REFLECTION_PROMPT
+            
+            prompt = (
+                SELF_REFLECTION_PROMPT
+                .replace("{user_name}", user_name or "User")
+                .replace("{date}", target_date.strftime("%Y-%m-%d"))
+                .replace("{propositions_data}", json.dumps(propositions_data, indent=2))
             )
-            latest_obs_result = await session.execute(latest_obs_stmt)
-            latest_observations = latest_obs_result.scalars().all()
-        
-        # Parse and clean the latest 5 observations using our parsing logic
-        for i, obs in enumerate(latest_observations):
-            content = obs.content.strip()
-            if content:
-                logger.info(f"    Processing observation {i+1}: {content[:100]}...")
+            
+            logger.info(f"Generated self-reflection prompt (length: {len(prompt)} characters)")
+            
+            # Get the unified AI client
+            client = await get_ai_client()
+            
+            # Generate self-reflection
+            logger.info("Sending self-reflection request to AI...")
+            try:
+                response_content = await client.text_completion(
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=3000,
+                    temperature=0.1
+                )
                 
-                # Use our parsing function to extract clean insights
-                parsed_insights = parse_ai_analysis_to_insights(content)
+                logger.info(f"Received AI response (length: {len(response_content)} characters)")
+                logger.info(f"Response preview: {response_content[:200]}...")
                 
-                if parsed_insights:
-                    # Add the parsed insights
-                    for insight in parsed_insights:
-                        key_insights.append(insight)
-                        logger.info(f"    Parsed insight: {insight[:80]}...")
-                else:
-                    # Fallback: if parsing didn't work, clean manually
-                    if "Video frame analysis" in content and "): " in content:
-                        # Extract just the analysis part after the prefix
-                        analysis_part = content.split("): ", 1)
-                        if len(analysis_part) > 1:
-                            content = analysis_part[1].strip()
-                    
-                    # Use our sentence cleaner
-                    cleaned_content = clean_insight_sentence(content)
-                    if cleaned_content:
-                        key_insights.append(cleaned_content)
-                        logger.info(f"    Cleaned insight: {cleaned_content[:80]}...")
-                    else:
-                        # Last resort: basic formatting
-                        if len(content) > 150:
-                            content = content[:147] + "..."
-                        if content and content[0].islower():
-                            content = content[0].upper() + content[1:]
-                        if content and not content.endswith(('.', '!', '?')):
-                            content += '.'
-                        key_insights.append(content)
-                        logger.info(f"    Basic formatted: {content[:80]}...")
-        
-        logger.info(f"Extracted {len(key_insights)} latest observations as key insights")
-        
-        # Extract behavior patterns from recent propositions
-        behavior_patterns = []
-        for prop in propositions[:5]:  # Take top 5 recent propositions
-            if prop.text and len(prop.text.strip()) > 20:
-                pattern = prop.text.strip()
-                # Clean up the pattern text
-                cleaned_pattern = clean_insight_sentence(pattern)
-                if cleaned_pattern:
-                    behavior_patterns.append(cleaned_pattern)
-        
-        # Generate summary based on available data
-        total_observations = len(observations)
-        total_propositions = len(propositions)
-        
-        if total_observations > 0 or total_propositions > 0:
-            summary = f"Analysis of {filename} reveals {total_observations} behavioral observations and {total_propositions} generated insights about user patterns and preferences."
-        else:
-            summary = f"Video analysis of {filename} completed with {len(frame_analyses)} frames processed. Additional data collection recommended for deeper insights."
-        
-        # Calculate confidence based on data availability
-        confidence_score = min(0.9, 0.3 + (len(key_insights) * 0.1) + (len(behavior_patterns) * 0.1))
-        
-        # Generate recommendations based on available data
-        recommendations = []
-        if len(key_insights) > 0:
-            recommendations.append("Review identified behavioral patterns for workflow optimization opportunities")
-        if len(behavior_patterns) > 0:
-            recommendations.append("Consider user preferences revealed in behavior patterns for interface improvements")
-        
-        recommendations.extend([
-            "Continue collecting behavioral data for more comprehensive insights",
-            "Analyze patterns over time to identify trends and changes in user behavior"
-        ])
-        
-        # Provide intelligent fallbacks if no meaningful insights were parsed
-        if not key_insights:
-            # Try one more time with more aggressive parsing of frame analyses
-            logger.info("No insights parsed, trying more aggressive extraction from frame analyses")
-            for frame_analysis in frame_analyses:
-                if frame_analysis and len(frame_analysis.strip()) > 50:
-                    # Extract the most meaningful sentences directly
-                    sentences = re.split(r'[.!?]+', frame_analysis)
-                    for sentence in sentences:
-                        cleaned = clean_insight_sentence(sentence)
-                        if cleaned and len(cleaned) > 30:
-                            key_insights.append(cleaned)
-                            if len(key_insights) >= 3:  # Limit to 3 good insights
-                                break
-                if len(key_insights) >= 3:
-                    break
-        
-        # Only use generic fallbacks if we absolutely can't extract anything meaningful
-        if not key_insights:
-            logger.warning(" Using generic fallback insights - no meaningful content could be parsed")
-            key_insights = [
-                f"Video analysis processed {len(frame_analyses)} frames of user interaction data.",
-                "User behavior patterns captured from video frames for analysis.",
-                "Interface interaction sequences documented for behavioral insights."
-            ]
-        
-        if not behavior_patterns:
-            behavior_patterns = [
-                "User interface navigation patterns observed and recorded.",
-                "Task-oriented interaction behaviors documented for analysis.",
-                "Sequential user actions captured for workflow optimization."
-            ]
-        
-        insights = {
-            "key_insights": key_insights[:5],  # Limit to 5 insights
-            "behavior_patterns": behavior_patterns[:5],  # Limit to 5 patterns
-            "summary": summary,
-            "confidence_score": confidence_score,
-            "recommendations": recommendations[:4]  # Limit to 4 recommendations
-        }
-        
-        logger.info(f"Generated {len(insights['key_insights'])} insights and {len(insights['behavior_patterns'])} patterns from existing GUM data")
-        return insights
+            except Exception as ai_error:
+                logger.error(f"AI completion failed: {ai_error}")
+                return SelfReflectionResponse(
+                    behavioral_pattern=f"Unable to generate behavioral pattern due to AI service error: {str(ai_error)}",
+                    specific_insights=[],
+                    data_points=len(propositions),
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
+            
+            # Parse the JSON response
+            try:
+                reflection_data = json.loads(response_content)
+                
+                # Validate and structure the response
+                behavioral_pattern = reflection_data.get("behavioral_pattern", "No behavioral pattern identified.")
+                specific_insights_data = reflection_data.get("specific_insights", [])
+                
+                # Convert specific insights to proper format
+                specific_insights = []
+                for insight_data in specific_insights_data:
+                    try:
+                        specific_insights.append(SpecificInsight(
+                            insight=insight_data.get("insight", ""),
+                            action=insight_data.get("action", ""),
+                            confidence=insight_data.get("confidence", 5),
+                            category=insight_data.get("category", "productivity")
+                        ))
+                    except Exception as e:
+                        logger.warning(f"Failed to parse specific insight: {e}")
+                        continue
+                
+                return SelfReflectionResponse(
+                    behavioral_pattern=behavioral_pattern,
+                    specific_insights=specific_insights,
+                    data_points=len(propositions),
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse AI response as JSON: {e}")
+                logger.error(f"Raw response: {response_content}")
+                
+                # Try to extract JSON from the response if it's wrapped in markdown or other formatting
+                import re
+                
+                # Look for JSON in markdown code blocks
+                json_match = re.search(r'```(?:json)?\s*(.*?)(?:```|\Z)', response_content, re.DOTALL)
+                if json_match:
+                    json_content = json_match.group(1).strip()
+                    logger.info(f"Found JSON in markdown block: {json_content[:200]}...")
+                    try:
+                        reflection_data = json.loads(json_content)
+                        behavioral_pattern = reflection_data.get("behavioral_pattern", "No behavioral pattern identified.")
+                        specific_insights_data = reflection_data.get("specific_insights", [])
+                        
+                        specific_insights = []
+                        for insight_data in specific_insights_data:
+                            try:
+                                specific_insights.append(SpecificInsight(
+                                    insight=insight_data.get("insight", ""),
+                                    action=insight_data.get("action", ""),
+                                    confidence=insight_data.get("confidence", 5),
+                                    category=insight_data.get("category", "productivity")
+                                ))
+                            except Exception as e:
+                                logger.warning(f"Failed to parse specific insight: {e}")
+                                continue
+                        
+                        return SelfReflectionResponse(
+                            behavioral_pattern=behavioral_pattern,
+                            specific_insights=specific_insights,
+                            data_points=len(propositions),
+                            generated_at=serialize_datetime(datetime.now(timezone.utc))
+                        )
+                    except json.JSONDecodeError as e2:
+                        logger.error(f"Failed to parse extracted JSON: {e2}")
+                
+                # Try to find JSON-like structure in the response
+                json_pattern = re.search(r'\{.*\}', response_content, re.DOTALL)
+                if json_pattern:
+                    json_candidate = json_pattern.group(0)
+                    logger.info(f"Found JSON-like pattern: {json_candidate[:200]}...")
+                    try:
+                        reflection_data = json.loads(json_candidate)
+                        behavioral_pattern = reflection_data.get("behavioral_pattern", "No behavioral pattern identified.")
+                        specific_insights_data = reflection_data.get("specific_insights", [])
+                        
+                        specific_insights = []
+                        for insight_data in specific_insights_data:
+                            try:
+                                specific_insights.append(SpecificInsight(
+                                    insight=insight_data.get("insight", ""),
+                                    action=insight_data.get("action", ""),
+                                    confidence=insight_data.get("confidence", 5),
+                                    category=insight_data.get("category", "productivity")
+                                ))
+                            except Exception as e:
+                                logger.warning(f"Failed to parse specific insight: {e}")
+                                continue
+                        
+                        return SelfReflectionResponse(
+                            behavioral_pattern=behavioral_pattern,
+                            specific_insights=specific_insights,
+                            data_points=len(propositions),
+                            generated_at=serialize_datetime(datetime.now(timezone.utc))
+                        )
+                    except json.JSONDecodeError as e3:
+                        logger.error(f"Failed to parse JSON-like pattern: {e3}")
+                
+                # Return a fallback response with the raw AI response for debugging
+                logger.error("All JSON parsing attempts failed")
+                return SelfReflectionResponse(
+                    behavioral_pattern=f"Unable to generate behavioral pattern due to processing error. The AI response was not in the expected JSON format. Raw response preview: {response_content[:500]}...",
+                    specific_insights=[],
+                    data_points=len(propositions),
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
         
     except Exception as e:
-        logger.error(f"Error generating insights from GUM data: {str(e)}")
-        
-        # Provide basic fallback insights
-        fallback_insights = {
-            "key_insights": [
-                f"Video analysis completed for {filename}",
-                f"Processed {len(frame_analyses)} frames with behavioral analysis",
-                "User interaction patterns captured for future insights"
-            ],
-            "behavior_patterns": [
-                "Video-based user behavior documentation initiated",
-                "Frame-by-frame interaction analysis completed",
-                "Behavioral data collection established for pattern recognition"
-            ],
-            "summary": f"Video analysis of {filename} completed successfully with {len(frame_analyses)} frames processed. Building behavioral understanding from collected data.",
-            "confidence_score": 0.5,
-            "recommendations": [
-                "Continue submitting observations to build comprehensive user behavior model",
-                "Review captured interactions for specific workflow improvement opportunities",
-                "Consider additional data collection for deeper behavioral insights"
-            ]
-        }
-        
-        logger.info("Generated fallback insights")
-        return fallback_insights
+        logger.error(f"Error generating self-reflection: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating self-reflection: {str(e)}"
+        )
 
 
 
 # Video processing storage
 video_processing_jobs = {}
 
+
+async def generate_video_insights(frame_analyses: List[str], filename: str) -> dict:
+    """
+    Generate insights from video frame analyses.
+    
+    Args:
+        frame_analyses: List of analysis strings from video frames
+        filename: Name of the video file
+        
+    Returns:
+        Dictionary containing generated insights
+    """
+    try:
+        logger.info(f"Generating video insights for {filename} with {len(frame_analyses)} frame analyses")
+        
+        # Combine all frame analyses into a single text for processing
+        combined_analysis = "\n\n".join(frame_analyses)
+        
+        # Get the unified AI client
+        client = await get_ai_client()
+        
+        # Create a prompt for generating insights
+        insight_prompt = f"""You are analyzing video frame data to generate behavioral insights.
+
+Video file: {filename}
+Number of frames analyzed: {len(frame_analyses)}
+
+Frame analyses:
+{combined_analysis[:3000]}...
+
+Please generate insights in the following JSON format:
+{{
+    "key_insights": [
+        "Insight 1 about user behavior",
+        "Insight 2 about user behavior",
+        "Insight 3 about user behavior"
+    ],
+    "behavior_patterns": [
+        "Pattern 1 observed",
+        "Pattern 2 observed",
+        "Pattern 3 observed"
+    ],
+    "summary": "2-3 sentence summary of the overall behavioral analysis",
+    "confidence_score": 0.8,
+    "recommendations": [
+        "Recommendation 1",
+        "Recommendation 2",
+        "Recommendation 3"
+    ]
+}}
+
+Focus on:
+- User behavior patterns and interactions
+- Productivity and workflow insights
+- Time management and focus patterns
+- Interface usage and preferences
+- Potential areas for improvement
+
+Return ONLY valid JSON, no additional text or formatting."""
+
+        # Generate insights using AI
+        response_content = await client.text_completion(
+            messages=[{"role": "user", "content": insight_prompt}],
+            max_tokens=2000,
+            temperature=0.1
+        )
+        
+        logger.info(f"Received AI response for video insights (length: {len(response_content)} characters)")
+        
+        # Parse the JSON response
+        try:
+            insights = json.loads(response_content)
+            
+            # Validate the structure
+            required_keys = ["key_insights", "behavior_patterns", "summary", "confidence_score", "recommendations"]
+            for key in required_keys:
+                if key not in insights:
+                    insights[key] = []
+            
+            # Ensure lists are returned
+            if not isinstance(insights["key_insights"], list):
+                insights["key_insights"] = []
+            if not isinstance(insights["behavior_patterns"], list):
+                insights["behavior_patterns"] = []
+            if not isinstance(insights["recommendations"], list):
+                insights["recommendations"] = []
+            
+            # Ensure confidence_score is a float
+            if not isinstance(insights["confidence_score"], (int, float)):
+                insights["confidence_score"] = 0.5
+            
+            # Ensure summary is a string
+            if not isinstance(insights["summary"], str):
+                insights["summary"] = f"Video analysis completed for {filename}"
+            
+            logger.info("Successfully generated video insights")
+            return insights
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse AI response as JSON: {e}")
+            logger.error(f"Raw response: {response_content[:500]}...")
+            
+            # Return fallback insights
+            return {
+                "key_insights": [
+                    f"Video processing completed for {filename}",
+                    f"Successfully analyzed {len(frame_analyses)} frames",
+                    "Behavioral data captured and ready for analysis"
+                ],
+                "behavior_patterns": [
+                    "Standard user interaction patterns observed",
+                    "Task-oriented behavior documented",
+                    "Interface engagement recorded"
+                ],
+                "summary": f"Video analysis completed for {filename} with {len(frame_analyses)} frames processed.",
+                "confidence_score": 0.5,
+                "recommendations": [
+                    "Review individual frame analyses for detailed insights",
+                    "Consider additional video samples for pattern validation"
+                ]
+            }
+            
+    except Exception as e:
+        logger.error(f"Error generating video insights: {e}")
+        
+        # Return fallback insights
+        return {
+            "key_insights": [
+                f"Video processing completed for {filename}",
+                f"Successfully analyzed {len(frame_analyses)} frames",
+                "Behavioral data captured and ready for analysis"
+            ],
+            "behavior_patterns": [
+                "Standard user interaction patterns observed",
+                "Task-oriented behavior documented",
+                "Interface engagement recorded"
+            ],
+            "summary": f"Video analysis completed for {filename} with {len(frame_analyses)} frames processed.",
+            "confidence_score": 0.5,
+            "recommendations": [
+                "Review individual frame analyses for detailed insights",
+                "Consider additional video samples for pattern validation"
+            ]
+        }
 
 
 def parse_ai_analysis_to_insights(analysis_text: str) -> List[str]:
@@ -2358,4 +2558,112 @@ async def get_observations_by_hour(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting observations by hour: {str(e)}"
+        )
+
+@app.get("/debug/propositions/{date}", response_model=dict)
+async def debug_propositions_for_date(
+    date: str,
+    user_name: Optional[str] = None
+):
+    """Debug endpoint to check what propositions exist for a specific date."""
+    try:
+        # Parse date parameter
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use YYYY-MM-DD"
+            )
+        
+        logger.info(f"Debugging propositions for {user_name} on {target_date}")
+        
+        # Get GUM instance
+        gum_inst = await ensure_gum_instance(user_name)
+        
+        # Convert local date to UTC date range using the same approach as propositions/by-hour
+        import pytz
+        from datetime import timedelta
+        
+        # Get user's timezone (assuming PDT for now, but this should be configurable)
+        user_tz = pytz.timezone('US/Pacific')  # This handles PDT/PST automatically
+        
+        # Create the start of the selected date in user's timezone
+        local_start = user_tz.localize(datetime.combine(target_date, datetime.min.time()))
+        local_end = user_tz.localize(datetime.combine(target_date, datetime.max.time()))
+        
+        # Convert to UTC
+        utc_start = local_start.astimezone(pytz.UTC)
+        utc_end = local_end.astimezone(pytz.UTC)
+        
+        logger.info(f"=== DEBUG DATE CONVERSION ===")
+        logger.info(f"Input date string: {date}")
+        logger.info(f"Parsed target_date: {target_date}")
+        logger.info(f"User timezone: {user_tz}")
+        logger.info(f"Local start of day: {local_start}")
+        logger.info(f"Local end of day: {local_end}")
+        logger.info(f"UTC start: {utc_start}")
+        logger.info(f"UTC end: {utc_end}")
+        logger.info(f"Current UTC time: {datetime.now(timezone.utc)}")
+        logger.info(f"Current local time: {datetime.now()}")
+        logger.info(f"=============================")
+        
+        # Query propositions for the date
+        async with gum_inst._session() as session:
+            from gum.models import Proposition
+            from sqlalchemy import select, and_
+            
+            # Get current time to filter out future hours
+            now = datetime.now(timezone.utc)
+            
+            # Build base query for the target date using the calculated UTC range
+            stmt = select(Proposition).where(
+                and_(
+                    Proposition.created_at >= utc_start,
+                    Proposition.created_at <= utc_end,
+                    Proposition.created_at <= now  # Only past hours
+                )
+            )
+            
+            # Order by creation time
+            stmt = stmt.order_by(Proposition.created_at)
+            
+            result = await session.execute(stmt)
+            propositions = result.scalars().all()
+            
+            logger.info(f"Found {len(propositions)} propositions for {target_date}")
+            
+            # Prepare debug data
+            debug_data = {
+                "date": date,
+                "target_date": str(target_date),
+                "user_timezone": str(user_tz),
+                "local_start": str(local_start),
+                "local_end": str(local_end),
+                "utc_start": str(utc_start),
+                "utc_end": str(utc_end),
+                "current_utc": str(datetime.now(timezone.utc)),
+                "current_local": str(datetime.now()),
+                "propositions_found": len(propositions),
+                "propositions": []
+            }
+            
+            # Add proposition details
+            for prop in propositions:
+                debug_data["propositions"].append({
+                    "id": prop.id,
+                    "text": prop.text[:100] + "..." if len(prop.text) > 100 else prop.text,
+                    "confidence": prop.confidence,
+                    "created_at": str(prop.created_at),
+                    "created_at_utc": str(prop.created_at.astimezone(pytz.UTC)) if prop.created_at.tzinfo else str(prop.created_at),
+                    "created_at_local": str(prop.created_at.astimezone(user_tz)) if prop.created_at.tzinfo else str(prop.created_at)
+                })
+            
+            return debug_data
+        
+    except Exception as e:
+        logger.error(f"Error debugging propositions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error debugging propositions: {str(e)}"
         )

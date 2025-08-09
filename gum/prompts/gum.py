@@ -1,3 +1,5 @@
+# gum.py
+
 AUDIT_PROMPT = """You are a data privacy compliance assistant for a large language model (LLM). 
 
 Here are some past interactions {user_name} had with an LLM
@@ -46,7 +48,7 @@ Consider these points in your analysis:
 - What specific tasks or goals is {user_name} actively working towards, as evidenced by named files, apps, platforms, or individuals?
 - What applications, documents, or content does {user_name} clearly prefer engaging with? Identify them by name.
 - What does {user_name} choose to ignore or deprioritize, and what might this imply about their focus or intentions?
-- What are the strengths or weaknesses in {user_name}’s behavior or tools? Cite relevant named entities or resources.
+- What are the strengths or weaknesses in {user_name}'s behavior or tools? Cite relevant named entities or resources.
 
 Provide detailed, concrete explanations for each inference. **Support every claim with specific references to named entities in the transcript.**
 
@@ -58,7 +60,7 @@ For each proposition you generate, evaluate its strength using two scales:
 
 Rate your confidence based on how clearly the evidence supports your claim. Consider:
 
-- **Direct Evidence**: Is there direct interaction with a specific, named entity (e.g., opened “Notion,” responded to “Slack” from “Alex”)?
+- **Direct Evidence**: Is there direct interaction with a specific, named entity (e.g., opened "Notion," responded to "Slack" from "Alex")?
 - **Relevance**: Is the evidence clearly tied to the proposition?
 - **Engagement Level**: Was the interaction meaningful or sustained?
 
@@ -211,3 +213,59 @@ Return **only** JSON in the following format:
     // one object per judgement, go through ALL propositions in the input.
   ]
 }"""
+
+SELF_REFLECTION_PROMPT = """You are a behavioral analyst creating a daily self-reflection summary for {user_name}.
+
+# Task
+Analyze the following behavioral insights (propositions) for {date} and create TWO distinct sections:
+
+## Section 1: Overall Behavioral Pattern (2-3 paragraphs)
+Write a comprehensive overview of {user_name}'s behavioral pattern for the day. Focus on:
+- Overall themes and patterns in their behavior
+- How they spent their time and energy
+- Key behavioral characteristics that emerged
+- General behavioral tendencies and preferences
+
+## Section 2: Specific Insights (3-5 actionable insights)
+Generate specific, personalized insights about what {user_name} is doing. Each insight should:
+- Be very specific to the user's actual behavior
+- Include actionable suggestions ("perhaps do this")
+- Be based on concrete evidence from the data
+- Address specific areas like productivity, focus, communication, learning, etc.
+
+# Examples of Specific Insights:
+- "You spent 3 hours on email management today, perhaps consider batching emails to 2 specific times per day"
+- "You frequently switched between coding and documentation, perhaps try focused 90-minute blocks for each"
+- "You responded to Slack messages within 2 minutes consistently, perhaps set specific times for communication"
+
+# Input Data
+{propositions_data}
+
+# Output Format
+You MUST return ONLY valid JSON in the following exact format. Do not include any markdown formatting, code blocks, or additional text:
+
+{{
+  "behavioral_pattern": "2-3 paragraph overview of overall behavioral pattern",
+  "specific_insights": [
+    {{
+      "insight": "specific insight about user behavior",
+      "action": "actionable suggestion",
+      "confidence": 7,
+      "category": "productivity"
+    }},
+    {{
+      "insight": "another specific insight about user behavior",
+      "action": "another actionable suggestion",
+      "confidence": 8,
+      "category": "focus"
+    }}
+  ]
+}}
+
+# Important Notes:
+- Return ONLY the JSON object, no additional text or formatting
+- Ensure all JSON is properly formatted with double quotes
+- Use only the specified categories: "productivity", "focus", "communication", "learning", "time_management"
+- Confidence scores should be integers between 1-10
+- The behavioral_pattern should be 2-3 paragraphs of text
+- Include 3-5 specific insights in the array"""

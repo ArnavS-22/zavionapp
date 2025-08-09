@@ -209,8 +209,15 @@ class ZavionApp {
         this.setupPropositionsListeners();
         this.setupTimelineListeners();
         this.setupNarrativeTimelineListeners();
+        this.setupSelfReflectionListeners();
         await this.checkConnection();
         this.updateConnectionStatus();
+        
+        // Initialize date inputs with today's date
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('timelineDate').value = today;
+        document.getElementById('narrativeTimelineDate').value = today;
+        document.getElementById('reflectionDate').value = today;
     }
 
     /**
@@ -1357,37 +1364,49 @@ class ZavionApp {
     /**
      * Switch to a specific tab
      */
-    switchTab(tabId) {
-        // Remove active class from all tabs and panels
-        document.querySelectorAll('.tab-button').forEach(btn => {
-            btn.classList.remove('active');
-            btn.setAttribute('aria-selected', 'false');
-        });
-        
-        document.querySelectorAll('.tab-panel').forEach(panel => {
+    switchTab(tabName) {
+        // Hide all tab panels
+        const tabPanels = document.querySelectorAll('.tab-panel');
+        tabPanels.forEach(panel => {
             panel.classList.remove('active');
         });
 
-        // Add active class to selected tab and panel
-        const activeButton = document.querySelector(`[data-tab="${tabId}"]`);
-        const activePanel = document.getElementById(`${tabId}-panel`);
+        // Remove active class from all tab buttons
+        const tabButtons = document.querySelectorAll('.tab-button');
+        tabButtons.forEach(button => {
+            button.classList.remove('active');
+            button.setAttribute('aria-selected', 'false');
+        });
 
-        if (activeButton && activePanel) {
-            activeButton.classList.add('active');
-            activeButton.setAttribute('aria-selected', 'true');
-            activePanel.classList.add('active');
-            this.activeTab = tabId;
+        // Show selected tab panel
+        const selectedPanel = document.getElementById(`${tabName}-panel`);
+        if (selectedPanel) {
+            selectedPanel.classList.add('active');
+        }
 
-            // Load content for specific tabs when activated
-            if (tabId === 'home') {
-                // Home page - no special loading needed
-            } else if (tabId === 'insights') {
-                // Insights will be loaded when user clicks "Load Insights"
-            } else if (tabId === 'timeline') {
-                // Timeline will be loaded when user clicks "Load Timeline"
-            } else if (tabId === 'narrative-timeline') {
-                // Narrative timeline will be loaded when user clicks "Load Timeline"
-            }
+        // Activate selected tab button
+        const selectedButton = document.querySelector(`[data-tab="${tabName}"]`);
+        if (selectedButton) {
+            selectedButton.classList.add('active');
+            selectedButton.setAttribute('aria-selected', 'true');
+        }
+
+        // Handle specific tab initialization
+        switch (tabName) {
+            case 'insights':
+                this.loadPropositions();
+                break;
+            case 'timeline':
+                this.loadTimeline();
+                break;
+            case 'narrative-timeline':
+                this.loadNarrativeTimeline();
+                break;
+            case 'self-reflection':
+                // Initialize self-reflection tab (no auto-load)
+                break;
+            default:
+                break;
         }
     }
 
@@ -1663,20 +1682,43 @@ class ZavionApp {
      * Setup narrative timeline event listeners
      */
     setupNarrativeTimelineListeners() {
-        const loadBtn = document.getElementById('loadNarrativeTimeline');
-        const dateInput = document.getElementById('narrativeTimelineDate');
+        const loadNarrativeTimelineBtn = document.getElementById('loadNarrativeTimeline');
+        const narrativeTimelineDateInput = document.getElementById('narrativeTimelineDate');
 
-        if (loadBtn) {
-            loadBtn.addEventListener('click', () => this.loadNarrativeTimeline());
+        if (loadNarrativeTimelineBtn) {
+            loadNarrativeTimelineBtn.addEventListener('click', () => this.loadNarrativeTimeline());
         }
 
-        if (dateInput) {
+        if (narrativeTimelineDateInput) {
             // Set default date to today
             const today = new Date().toISOString().split('T')[0];
-            dateInput.value = today;
-            
-            // Load timeline on date change
-            dateInput.addEventListener('change', () => this.loadNarrativeTimeline());
+            narrativeTimelineDateInput.value = today;
+        }
+    }
+
+    setupSelfReflectionListeners() {
+        const generateReflectionBtn = document.getElementById('generateReflection');
+        const reflectionDateInput = document.getElementById('reflectionDate');
+        const reflectionConfidenceFilter = document.getElementById('reflectionConfidenceFilter');
+
+        if (generateReflectionBtn) {
+            generateReflectionBtn.addEventListener('click', () => this.generateReflection());
+        }
+
+        if (reflectionDateInput) {
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            reflectionDateInput.value = today;
+        }
+
+        if (reflectionConfidenceFilter) {
+            reflectionConfidenceFilter.addEventListener('change', () => {
+                // Auto-regenerate reflection when filter changes (if reflection is already loaded)
+                const content = document.getElementById('selfReflectionContent');
+                if (content && !content.querySelector('.empty-state')) {
+                    this.generateReflection();
+                }
+            });
         }
     }
 
@@ -2083,6 +2125,149 @@ class ZavionApp {
                 <p>No raw observations found for the selected date. Try a different date or check if you have any observations recorded.</p>
             </div>
         `;
+    }
+
+    async generateReflection() {
+        const date = document.getElementById('reflectionDate').value;
+        const confidenceFilter = document.getElementById('reflectionConfidenceFilter').value;
+        
+        if (!date) {
+            this.showToast('Please select a date', 'error');
+            return;
+        }
+
+        const content = document.getElementById('selfReflectionContent');
+        content.innerHTML = `
+            <div class="loading">
+                <div class="text-shimmer">Generating your behavioral reflection...</div>
+            </div>
+        `;
+        content.classList.add('loading');
+
+        try {
+            const params = new URLSearchParams({
+                date: date
+            });
+            
+            if (confidenceFilter) {
+                params.append('confidence_min', confidenceFilter);
+            }
+
+            const response = await fetch(`${this.apiBaseUrl}/propositions/reflection/generate?${params}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const reflectionData = await response.json();
+            
+            // Display the reflection
+            this.displayReflection(reflectionData);
+            
+        } catch (error) {
+            console.error('Error generating reflection:', error);
+            content.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <h3>Error generating reflection</h3>
+                    <p>${error.message}</p>
+                </div>
+            `;
+            this.showToast('Failed to generate reflection', 'error');
+        } finally {
+            content.classList.remove('loading');
+        }
+    }
+
+    displayReflection(reflectionData) {
+        const content = document.getElementById('selfReflectionContent');
+        
+        // Create stats section
+        const statsHtml = `
+            <div class="reflection-stats">
+                <div class="reflection-stat">
+                    <div class="stat-value">${reflectionData.data_points}</div>
+                    <div class="stat-label">Data Points Analyzed</div>
+                </div>
+                <div class="reflection-stat">
+                    <div class="stat-value">${reflectionData.specific_insights.length}</div>
+                    <div class="stat-label">Specific Insights</div>
+                </div>
+                <div class="reflection-stat">
+                    <div class="stat-value">${new Date(reflectionData.generated_at).toLocaleString()}</div>
+                    <div class="stat-label">Generated At</div>
+                </div>
+            </div>
+        `;
+
+        // Create behavioral pattern section
+        const behavioralPatternHtml = `
+            <div class="behavioral-pattern-section">
+                <h3>
+                    <i class="fas fa-chart-line"></i>
+                    Overall Behavioral Pattern
+                </h3>
+                <div class="behavioral-pattern-content">
+                    ${reflectionData.behavioral_pattern}
+                </div>
+            </div>
+        `;
+
+        // Create specific insights section
+        let insightsHtml = `
+            <div class="specific-insights-section">
+                <h3>
+                    <i class="fas fa-lightbulb"></i>
+                    Specific Insights & Suggestions
+                </h3>
+        `;
+
+        if (reflectionData.specific_insights && reflectionData.specific_insights.length > 0) {
+            insightsHtml += '<div class="insights-grid">';
+            
+            reflectionData.specific_insights.forEach(insight => {
+                insightsHtml += `
+                    <div class="insight-card">
+                        <div class="insight-header">
+                            <span class="insight-category">${insight.category}</span>
+                            <span class="insight-confidence">Confidence: ${insight.confidence}/10</span>
+                        </div>
+                        <div class="insight-content">
+                            <div class="insight-text">${insight.insight}</div>
+                            <div class="insight-action">💡 ${insight.action}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            insightsHtml += '</div>';
+        } else {
+            insightsHtml += `
+                <div class="empty-state">
+                    <i class="fas fa-info-circle"></i>
+                    <h3>No specific insights available</h3>
+                    <p>Try selecting a different date or lowering the confidence filter</p>
+                </div>
+            `;
+        }
+
+        insightsHtml += '</div>';
+
+        // Combine all sections
+        content.innerHTML = `
+            <div class="reflection-generated">
+                ${statsHtml}
+                ${behavioralPatternHtml}
+                ${insightsHtml}
+            </div>
+        `;
+
+        this.showToast('Reflection generated successfully!', 'success');
     }
 
 
