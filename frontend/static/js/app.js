@@ -206,7 +206,6 @@ class ZavionApp {
         this.applyTheme();
         this.setupEventListeners();
         this.setupTabNavigation();
-        this.setupDashboardTabNavigation();
         this.setupPropositionsListeners();
         this.setupTimelineListeners();
         this.setupNarrativeTimelineListeners();
@@ -1355,46 +1354,6 @@ class ZavionApp {
         });
     }
 
-    setupDashboardTabNavigation() {
-        const dashboardTabButtons = document.querySelectorAll('.dashboard-tab-button');
-        
-        dashboardTabButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const tabId = button.getAttribute('data-dashboard-tab');
-                this.switchDashboardTab(tabId);
-            });
-        });
-    }
-
-    switchDashboardTab(tabId) {
-        // Remove active class from all dashboard tabs and panels
-        document.querySelectorAll('.dashboard-tab-button').forEach(btn => {
-            btn.classList.remove('active');
-            btn.setAttribute('aria-selected', 'false');
-        });
-        
-        document.querySelectorAll('.dashboard-tab-panel').forEach(panel => {
-            panel.classList.remove('active');
-        });
-
-        // Add active class to selected tab and panel
-        const activeButton = document.querySelector(`[data-dashboard-tab="${tabId}"]`);
-        const activePanel = document.getElementById(`${tabId}-panel`);
-
-        if (activeButton && activePanel) {
-            activeButton.classList.add('active');
-            activeButton.setAttribute('aria-selected', 'true');
-            activePanel.classList.add('active');
-
-            // Load content for specific dashboard tabs when activated
-            if (tabId === 'insights') {
-                // Insights will be loaded when user clicks "Load Insights"
-            } else if (tabId === 'timeline') {
-                // Timeline will be loaded when user clicks "Load Timeline"
-            }
-        }
-    }
-
     /**
      * Switch to a specific tab
      */
@@ -1422,8 +1381,12 @@ class ZavionApp {
             // Load content for specific tabs when activated
             if (tabId === 'home') {
                 // Home page - no special loading needed
-            } else if (tabId === 'dashboard') {
-        
+            } else if (tabId === 'insights') {
+                // Insights will be loaded when user clicks "Load Insights"
+            } else if (tabId === 'timeline') {
+                // Timeline will be loaded when user clicks "Load Timeline"
+            } else if (tabId === 'narrative-timeline') {
+                // Narrative timeline will be loaded when user clicks "Load Timeline"
             }
         }
     }
@@ -2125,126 +2088,7 @@ class ZavionApp {
 
 }
 
-// ========================================
-// TEXT SHIMMER DEMO FUNCTIONS
-// ========================================
 
-// Demo functions for the home page shimmer demo
-function demoBasicShimmer() {
-    const demoArea = document.getElementById('shimmerDemoArea');
-    if (!demoArea || !window.zavionApp) return;
-
-    const shimmerElement = window.zavionApp.createTextShimmer('This is a basic text shimmer effect...', {
-        color: 'cyan',
-        size: 'lg'
-    });
-
-    demoArea.innerHTML = '';
-    demoArea.appendChild(shimmerElement);
-
-    // Auto-clear after 3 seconds
-    setTimeout(() => {
-        demoArea.innerHTML = '<p style="color: var(--text-muted); text-align: center; margin: 0;">Demo area - click buttons above to see shimmer effects</p>';
-    }, 3000);
-}
-
-function demoButtonLoading() {
-    const demoArea = document.getElementById('shimmerDemoArea');
-    if (!demoArea || !window.zavionApp) return;
-
-    // Create a demo button
-    const demoButton = document.createElement('button');
-    demoButton.className = 'btn-primary';
-    demoButton.innerHTML = '<i class="fas fa-rocket"></i> Launch Action';
-    demoButton.style.marginBottom = '1rem';
-
-    demoArea.innerHTML = '';
-    demoArea.appendChild(demoButton);
-
-    // Show loading state
-    const loadingInstanceId = window.zavionApp.showButtonLoading(demoButton, 'Processing...', {
-        color: 'cyan',
-        fast: true
-    });
-
-    // Hide loading state after 2 seconds
-    setTimeout(() => {
-        window.zavionApp.hideButtonLoading(loadingInstanceId);
-    }, 2000);
-}
-
-function demoCardLoading() {
-    const demoArea = document.getElementById('shimmerDemoArea');
-    if (!demoArea || !window.zavionApp) return;
-
-    // Create demo content
-    demoArea.innerHTML = `
-        <div style="padding: 1rem; background: var(--bg-card); border-radius: var(--border-radius); border: 1px solid var(--border-light);">
-            <h4 style="margin: 0 0 0.5rem 0; color: var(--text-primary);">Sample Card Content</h4>
-            <p style="margin: 0; color: var(--text-secondary);">This is some sample content that will be replaced with a loading state.</p>
-        </div>
-    `;
-
-    // Show loading state
-    const loadingInstanceId = window.zavionApp.showCardLoading(demoArea, 'Loading card data...', {
-        color: 'cyan',
-        size: 'lg'
-    });
-
-    // Hide loading state after 3 seconds
-    setTimeout(() => {
-        window.zavionApp.hideCardLoading(loadingInstanceId);
-    }, 3000);
-}
-
-function demoColorVariants() {
-    const demoArea = document.getElementById('shimmerDemoArea');
-    if (!demoArea || !window.zavionApp) return;
-
-    demoArea.innerHTML = `
-        <div style="display: flex; flex-direction: column; gap: 1rem;">
-            <div>
-                <strong style="color: var(--text-primary);">Default Shimmer:</strong>
-                <div id="defaultShimmer"></div>
-            </div>
-            <div>
-                <strong style="color: var(--text-primary);">Blue Shimmer:</strong>
-                <div id="blueShimmer"></div>
-            </div>
-            <div>
-                <strong style="color: var(--text-primary);">Cyan Shimmer:</strong>
-                <div id="cyanShimmer"></div>
-            </div>
-            <div>
-                <strong style="color: var(--text-primary);">Fast Animation:</strong>
-                <div id="fastShimmer"></div>
-            </div>
-            <div>
-                <strong style="color: var(--text-primary);">Monospace Font:</strong>
-                <div id="monoShimmer"></div>
-            </div>
-        </div>
-    `;
-
-    // Create different shimmer variants
-    const defaultShimmer = window.zavionApp.createTextShimmer('Default shimmer effect...');
-    const blueShimmer = window.zavionApp.createTextShimmer('Blue shimmer variant...', { color: 'blue' });
-    const cyanShimmer = window.zavionApp.createTextShimmer('Cyan shimmer variant...', { color: 'cyan' });
-    const fastShimmer = window.zavionApp.createTextShimmer('Fast animation...', { fast: true });
-    const monoShimmer = window.zavionApp.createTextShimmer('Monospace font...', { mono: true, color: 'cyan' });
-
-    // Add to demo area
-    document.getElementById('defaultShimmer').appendChild(defaultShimmer);
-    document.getElementById('blueShimmer').appendChild(blueShimmer);
-    document.getElementById('cyanShimmer').appendChild(cyanShimmer);
-    document.getElementById('fastShimmer').appendChild(fastShimmer);
-    document.getElementById('monoShimmer').appendChild(monoShimmer);
-
-    // Auto-clear after 5 seconds
-    setTimeout(() => {
-        demoArea.innerHTML = '<p style="color: var(--text-muted); text-align: center; margin: 0;">Demo area - click buttons above to see shimmer effects</p>';
-    }, 5000);
-}
 
 // Initialize application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
