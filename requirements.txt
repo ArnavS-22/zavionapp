@@ -1,0 +1,21 @@
+# Core dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
+
+# AI/ML dependencies
+openai==1.3.7
+
+# Screen capture and system monitoring
+mss
+pynput
+Pillow
+
+# Database and utilities
+SQLAlchemy>=2.0.0
+aiosqlite
+python-dotenv==1.0.0
+
+# Timezone handling
+pytz

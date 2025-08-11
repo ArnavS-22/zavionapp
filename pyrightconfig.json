@@ -1,0 +1,16 @@
+{
+    "pythonPath": ".venv/Scripts/python.exe",
+    "pythonVersion": "3.13",
+    "venvPath": ".",
+    "venv": ".venv",
+    "extraPaths": [
+        ".",
+        "gum"
+    ],
+    "typeCheckingMode": "off",
+    "reportMissingImports": "warning",
+    "reportMissingTypeStubs": "none",
+    "reportMissingModuleSource": "none",
+    "reportAttributeAccessIssue": "none",
+    "reportArgumentType": "none"
+}
