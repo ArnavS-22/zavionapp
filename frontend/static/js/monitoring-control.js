@@ -7,7 +7,7 @@
 class ZavionMonitoringControl {
     constructor() {
         // Configuration
-        this.localBackendUrl = 'http://localhost:8001';
+        this.localBackendUrl = 'http://localhost:8000';
         this.hostedDomain = 'https://zavion.app';
         this.pollingInterval = 10000; // 10 seconds
         this.maxRetries = 3;

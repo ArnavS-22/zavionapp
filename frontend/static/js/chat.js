@@ -5,7 +5,7 @@
 
 class ZavionChat {
     constructor() {
-        this.apiBaseUrl = window.GUM_CONFIG?.apiBaseUrl || 'http://localhost:8001';
+        this.apiBaseUrl = window.GUM_CONFIG?.apiBaseUrl || 'http://localhost:8000';
         this.messages = [];
         this.isTyping = false;
         this.chatHistory = [];

@@ -6,7 +6,7 @@
 class ZavionApp {
     constructor() {
         // Use configuration from injected global variable or fallback to default
-        this.apiBaseUrl = window.ZAVION_CONFIG?.apiBaseUrl || 'http://localhost:8001';
+        this.apiBaseUrl = window.ZAVION_CONFIG?.apiBaseUrl || 'http://localhost:8000';
         console.log('Zavion Frontend initialized with API base URL:', this.apiBaseUrl);
         
         this.connectionStatus = 'connecting';
