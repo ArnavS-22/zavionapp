@@ -6,7 +6,9 @@ const http = require('http');
 
 let mainWindow;
 let pythonProcess = null;
+let cliProcess = null;
 let isBackendRunning = false;
+let isCliRunning = false;
 
 // Path to Python backend
 const getBackendPath = () => {
@@ -124,6 +126,144 @@ function startBackend() {
 
   } catch (error) {
     console.error('Error starting backend:', error);
+  }
+}
+
+// Start CLI tracking process
+function startCliTracking() {
+  if (isCliRunning) {
+    console.log('CLI tracking already running');
+    return;
+  }
+
+  try {
+    console.log('Starting CLI tracking...');
+    
+    // Get the correct working directory for CLI
+    const cliWorkingDir = path.join(__dirname, '..', '..'); // Go up to gum root directory
+    
+    // Spawn CLI process with correct working directory
+    cliProcess = spawn(`python -m gum.cli --user-name "Arnav Sharma" --model gpt-4o-mini`, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
+      shell: true,
+      cwd: cliWorkingDir // Set working directory to where gum module is located
+    });
+
+    // Handle CLI process events
+    cliProcess.stdout.on('data', (data) => {
+      console.log(`CLI stdout: ${data}`);
+      const output = data.toString();
+      
+      // Look for CLI startup success messages
+      if (output.includes('Monitoring started') || 
+          output.includes('GUM CLI initialized') ||
+          output.includes('Starting monitoring') ||
+          output.includes('Behavior tracking active') ||
+          output.includes('GUM CLI') ||
+          output.includes('Starting')) {
+        isCliRunning = true;
+        console.log('CLI tracking started successfully');
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('cli-status', { running: true, message: 'Tracking started' });
+        }
+      }
+    });
+
+    cliProcess.stderr.on('data', (data) => {
+      console.error(`CLI stderr: ${data}`);
+      const output = data.toString();
+      
+      // Look for CLI startup success messages in stderr too
+      if (output.includes('Monitoring started') || 
+          output.includes('GUM CLI initialized') ||
+          output.includes('Starting monitoring') ||
+          output.includes('Behavior tracking active') ||
+          output.includes('GUM CLI') ||
+          output.includes('Starting')) {
+        isCliRunning = true;
+        console.log('CLI tracking started successfully');
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('cli-status', { running: true, message: 'Tracking started' });
+        }
+      }
+      
+      // Check for specific error messages
+      if (output.includes('ModuleNotFoundError') || output.includes('No module named')) {
+        console.error('CLI module not found - check working directory');
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('cli-status', { running: false, message: 'Module not found - check paths' });
+        }
+      }
+    });
+
+    cliProcess.on('error', (error) => {
+      console.error('Failed to start CLI tracking:', error);
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('cli-status', { running: false, message: `Failed: ${error.message}` });
+      }
+    });
+
+    cliProcess.on('close', (code) => {
+      console.log(`CLI process exited with code ${code}`);
+      isCliRunning = false;
+      cliProcess = null;
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('cli-status', { running: false, message: 'Tracking stopped' });
+      }
+    });
+
+    // Wait a bit to see if process starts successfully
+    setTimeout(() => {
+      if (!isCliRunning) {
+        console.log('CLI startup timeout, checking if running...');
+        // Check if process is still alive
+        if (cliProcess && !cliProcess.killed) {
+          isCliRunning = true;
+          console.log('CLI process appears to be running');
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('cli-status', { running: true, message: 'Tracking active' });
+          }
+        }
+      }
+    }, 3000);
+
+  } catch (error) {
+    console.error('Error starting CLI tracking:', error);
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('cli-status', { running: false, message: `Error: ${error.message}` });
+    }
+  }
+}
+
+// Stop CLI tracking process
+function stopCliTracking() {
+  if (!isCliRunning || !cliProcess) {
+    console.log('CLI tracking not running');
+    return;
+  }
+
+  try {
+    console.log('Stopping CLI tracking...');
+    
+    // Kill the process
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', cliProcess.pid, '/f', '/t']);
+    } else {
+      cliProcess.kill('SIGTERM');
+    }
+    
+    isCliRunning = false;
+    cliProcess = null;
+    
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('cli-status', { running: false, message: 'Tracking stopped' });
+    }
+    
+    console.log('CLI tracking stopped');
+    
+  } catch (error) {
+    console.error('Error stopping CLI tracking:', error);
   }
 }
 
@@ -245,4 +385,22 @@ app.on('quit', () => {
   if (pythonProcess) {
     stopBackend();
   }
+  if (cliProcess) {
+    stopCliTracking();
+  }
+});
+
+// IPC handlers for CLI tracking
+ipcMain.handle('start-cli-tracking', () => {
+  startCliTracking();
+  return { success: true };
+});
+
+ipcMain.handle('stop-cli-tracking', () => {
+  stopCliTracking();
+  return { success: true };
+});
+
+ipcMain.handle('get-cli-status', () => {
+  return { running: isCliRunning };
 });

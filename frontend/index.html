@@ -10,6 +10,20 @@
 </head>
 <body>
 
+    <!-- CLI Tracking Toggle (Electron Only) -->
+    <div id="cli-toggle" style="display: none; position: fixed; top: 20px; left: 20px; z-index: 1000; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border: 1px solid #ddd;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div>
+                <div style="font-weight: 600; font-size: 14px; color: #333;">Behavior Tracking</div>
+                <div id="cli-status" style="font-size: 12px; color: #666;">Checking...</div>
+            </div>
+            <button id="cli-toggle-btn" style="width: 50px; height: 26px; border-radius: 13px; border: none; background: #ccc; position: relative; cursor: pointer; transition: background 0.3s;">
+                <div id="cli-toggle-slider" style="width: 20px; height: 20px; background: white; border-radius: 50%; position: absolute; top: 3px; left: 3px; transition: left 0.3s;"></div>
+            </button>
+            <div id="cli-status-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: #999;"></div>
+        </div>
+    </div>
+
     <!-- Main Content -->
     <main class="main-content">
         <!-- Navigation Tabs -->
@@ -250,5 +264,108 @@
     <div id="toast" class="toast" role="alert" aria-live="polite"></div>
 
     <script src="static/js/app.js?v=2"></script>
+
+    <!-- CLI Tracking Toggle Script -->
+    <script>
+        // Check if we're running in Electron
+        if (typeof window !== 'undefined' && window.api) {
+            const cliToggle = document.getElementById('cli-toggle');
+            const cliStatus = document.getElementById('cli-status');
+            const cliToggleBtn = document.getElementById('cli-toggle-btn');
+            const cliToggleSlider = document.getElementById('cli-toggle-slider');
+            const cliStatusIndicator = document.getElementById('cli-status-indicator');
+
+            // Show the toggle in Electron
+            cliToggle.style.display = 'block';
+
+            let isCliRunning = false;
+            let isLoading = false;
+
+            // Get initial CLI status
+            async function getCliStatus() {
+                try {
+                    const status = await window.api.getCliStatus();
+                    isCliRunning = status.running;
+                    updateCliUI();
+                } catch (error) {
+                    console.error('Failed to get CLI status:', error);
+                    cliStatus.textContent = 'Failed to get status';
+                }
+            }
+
+            // Update UI based on CLI status
+            function updateCliUI() {
+                if (isCliRunning) {
+                    cliStatus.textContent = 'Tracking Active';
+                    cliToggleBtn.style.background = '#22c55e';
+                    cliToggleSlider.style.left = '27px';
+                    cliStatusIndicator.style.background = '#22c55e';
+                } else {
+                    cliStatus.textContent = 'Stopped';
+                    cliToggleBtn.style.background = '#ccc';
+                    cliToggleSlider.style.left = '3px';
+                    cliStatusIndicator.style.background = '#999';
+                }
+
+                if (isLoading) {
+                    cliStatusIndicator.style.animation = 'pulse 1s infinite';
+                } else {
+                    cliStatusIndicator.style.animation = 'none';
+                }
+            }
+
+            // Handle toggle click
+            cliToggleBtn.addEventListener('click', async () => {
+                if (isLoading) return;
+
+                isLoading = true;
+                updateCliUI();
+
+                try {
+                    if (isCliRunning) {
+                        const result = await window.api.stopCliTracking();
+                        if (result.success) {
+                            cliStatus.textContent = 'Stopping...';
+                        } else {
+                            cliStatus.textContent = `Error: ${result.message}`;
+                        }
+                    } else {
+                        const result = await window.api.startCliTracking();
+                        if (result.success) {
+                            cliStatus.textContent = 'Starting...';
+                        } else {
+                            cliStatus.textContent = `Error: ${result.message}`;
+                        }
+                    }
+                } catch (error) {
+                    console.error('CLI toggle failed:', error);
+                    cliStatus.textContent = 'Toggle failed';
+                } finally {
+                    isLoading = false;
+                    updateCliUI();
+                }
+            });
+
+            // Listen for CLI status updates
+            window.api.onCliStatus((status) => {
+                isCliRunning = status.running;
+                cliStatus.textContent = status.message;
+                updateCliUI();
+            });
+
+            // Get initial status
+            getCliStatus();
+
+            // Add pulse animation
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.5; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+    </script>
 </body>
 </html>
