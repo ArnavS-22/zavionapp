@@ -1359,6 +1359,18 @@ class ZavionApp {
                 this.switchTab(tabId);
             });
         });
+
+        // Initially hide sidebar since home tab is active by default
+        const sidebar = document.querySelector('.tabs-navigation');
+        if (sidebar) {
+            sidebar.style.display = 'none';
+        }
+
+        // Ensure top-nav layout is disabled on initial Home
+        const main = document.querySelector('.main-content');
+        if (main) {
+            main.classList.remove('has-top-nav');
+        }
     }
 
     /**
@@ -1375,23 +1387,41 @@ class ZavionApp {
         const tabButtons = document.querySelectorAll('.tab-button');
         tabButtons.forEach(button => {
             button.classList.remove('active');
-            button.setAttribute('aria-selected', 'false');
         });
 
-        // Show selected tab panel
+        // Show the selected tab panel
         const selectedPanel = document.getElementById(`${tabName}-panel`);
         if (selectedPanel) {
             selectedPanel.classList.add('active');
         }
 
-        // Activate selected tab button
+        // Add active class to the selected tab button
         const selectedButton = document.querySelector(`[data-tab="${tabName}"]`);
         if (selectedButton) {
             selectedButton.classList.add('active');
-            selectedButton.setAttribute('aria-selected', 'true');
         }
 
-        // Handle specific tab initialization
+        // Handle sidebar visibility
+        const sidebar = document.querySelector('.tabs-navigation');
+        if (sidebar) {
+            if (tabName === 'home') {
+                sidebar.style.display = 'none';
+            } else {
+                sidebar.style.display = 'block';
+            }
+        }
+
+        // Toggle top-nav layout only where sidebar used to show (non-Home tabs)
+        const main = document.querySelector('.main-content');
+        if (main) {
+            if (tabName === 'home') {
+                main.classList.remove('has-top-nav');
+            } else {
+                main.classList.add('has-top-nav');
+            }
+        }
+
+        // Load content based on tab
         switch (tabName) {
             case 'insights':
                 this.loadPropositions();
@@ -1399,14 +1429,13 @@ class ZavionApp {
             case 'timeline':
                 this.loadTimeline();
                 break;
-            case 'narrative-timeline':
+            case 'narrative':
                 this.loadNarrativeTimeline();
                 break;
             case 'self-reflection':
-                // Initialize self-reflection tab (no auto-load)
+                // Load self-reflection content if needed
                 break;
-            default:
-                break;
+            // 'dashboard' tab removed; Home CTA routes to 'timeline'
         }
     }
 
@@ -1577,7 +1606,14 @@ class ZavionApp {
         const hour = hourGroup.hour;
         const hourDisplay = hourGroup.hour_display;
         const count = hourGroup.proposition_count;
-        const propositions = hourGroup.propositions;
+        const propositions = Array.isArray(hourGroup.propositions) ? [...hourGroup.propositions] : [];
+
+        // Sort propositions by created_at ascending (unknowns last)
+        propositions.sort((a, b) => {
+            const aTime = a?.created_at ? new Date(a.created_at).getTime() : Infinity;
+            const bTime = b?.created_at ? new Date(b.created_at).getTime() : Infinity;
+            return aTime - bTime;
+        });
 
         return `
             <div class="timeline-hour-item" data-hour="${hour}" style="animation-delay: ${index * 0.1}s">
@@ -1592,11 +1628,17 @@ class ZavionApp {
                 <div class="timeline-hour-details" id="timeline-hour-${hour}">
                     <div class="timeline-propositions">
                         <strong>Individual Insights:</strong>
-                        ${propositions.map(prop => `
-                            <div class="timeline-proposition">
-                                <strong>#${prop.id}</strong> (Confidence: ${prop.confidence || 'N/A'}) - ${this.escapeHtml(prop.text)}
-                            </div>
-                        `).join('')}
+                        ${propositions.map(prop => {
+                            const timeLabel = prop?.created_at ? this.formatLocalTime(prop.created_at) : 'Unknown time';
+                            return `
+                                <div class="timeline-proposition">
+                                    <span class="timeline-proposition-time">${timeLabel}</span>
+                                    <div class="timeline-proposition-text">
+                                        <strong>#${prop.id}</strong> (Confidence: ${prop.confidence || 'N/A'}) - ${this.escapeHtml(prop.text)}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
                     </div>
                 </div>
             </div>
@@ -2258,6 +2300,95 @@ class ZavionApp {
         this.showToast('Reflection generated successfully!', 'success');
     }
 
+    // Dashboard functionality
+    startTracking() {
+        // This will start the CLI tracking via Electron
+        if (window.electronAPI && window.electronAPI.startCliTracking) {
+            window.electronAPI.startCliTracking();
+            this.updateTrackingStatus('Starting...');
+        } else {
+            console.log('Electron API not available');
+        }
+    }
+
+    updateTrackingStatus(status) {
+        const statusElement = document.getElementById('tracking-status');
+        if (statusElement) {
+            statusElement.textContent = status;
+        }
+    }
+
+    updateDataStatus(status) {
+        const dataElement = document.getElementById('data-status');
+        if (dataElement) {
+            dataElement.textContent = status;
+        }
+    }
+
+    async loadDashboardData() {
+        try {
+            // Check tracking status
+            if (window.electronAPI && window.electronAPI.getCliStatus) {
+                const status = await window.electronAPI.getCliStatus();
+                this.updateTrackingStatus(status.isRunning ? 'Active' : 'Stopped');
+            }
+
+            // Check data status
+            const response = await fetch(`${this.apiBaseUrl}/propositions/count`);
+            if (response.ok) {
+                const data = await response.json();
+                this.updateDataStatus(`${data.count} insights generated`);
+            } else {
+                this.updateDataStatus('No data yet');
+            }
+
+            // Load recent activity
+            this.loadRecentActivity();
+        } catch (error) {
+            console.error('Error loading dashboard data:', error);
+            this.updateTrackingStatus('Error');
+            this.updateDataStatus('Error loading data');
+        }
+    }
+
+    async loadRecentActivity() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/propositions?limit=3&sort_by=created_at`);
+            if (response.ok) {
+                const data = await response.json();
+                this.displayRecentActivity(data.propositions || []);
+            } else {
+                this.displayRecentActivity([]);
+            }
+        } catch (error) {
+            console.error('Error loading recent activity:', error);
+            this.displayRecentActivity([]);
+        }
+    }
+
+    displayRecentActivity(propositions) {
+        const activityPreview = document.getElementById('activity-preview');
+        if (!activityPreview) return;
+
+        if (propositions.length === 0) {
+            activityPreview.innerHTML = '<p class="loading-text">No insights generated yet. Start tracking to see your first insights!</p>';
+            return;
+        }
+
+        const activityHTML = propositions.map(prop => `
+            <div class="activity-item">
+                <div class="activity-icon">
+                    <i class="fas fa-lightbulb"></i>
+                </div>
+                <div class="activity-content">
+                    <p class="activity-text">${prop.text.substring(0, 100)}${prop.text.length > 100 ? '...' : ''}</p>
+                    <span class="activity-time">${new Date(prop.created_at).toLocaleDateString()}</span>
+                </div>
+            </div>
+        `).join('');
+
+        activityPreview.innerHTML = activityHTML;
+    }
 
 }
 
