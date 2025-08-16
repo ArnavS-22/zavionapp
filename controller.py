@@ -159,6 +159,49 @@ class ErrorResponse(BaseModel):
     timestamp: str = Field(..., description="Error timestamp (ISO format)")
 
 
+class SuggestionItem(BaseModel):
+    """Individual suggestion item."""
+    title: str = Field(..., description="Clear, actionable suggestion title")
+    description: str = Field(..., description="Detailed explanation of the suggestion")
+    urgency: str = Field(..., description="Urgency level: now, today, this_week")
+    category: str = Field(..., description="Category: workflow, completion, learning, optimization, strategic")
+    evidence: str = Field(..., description="Specific evidence from transcriptions")
+    action_items: List[str] = Field(..., description="Specific actionable steps")
+    confidence: int = Field(..., description="Confidence level 1-10")
+    created_at: str = Field(..., description="When suggestion was generated")
+
+
+class SuggestionsResponse(BaseModel):
+    """Response model for generated suggestions."""
+    suggestions: List[SuggestionItem] = Field(..., description="List of generated suggestions")
+    data_points: int = Field(..., description="Number of observations analyzed")
+    time_range_hours: float = Field(..., description="Time range of data analyzed in hours")
+    generated_at: str = Field(..., description="When suggestions were generated")
+
+
+# Chat Models
+class ChatMessage(BaseModel):
+    """Individual chat message."""
+    role: str = Field(..., description="Message role: user or assistant")
+    content: str = Field(..., description="Message content")
+    timestamp: str = Field(..., description="When message was sent")
+
+
+class ChatRequest(BaseModel):
+    """Request model for chat endpoint."""
+    message: str = Field(..., description="User message", max_length=2000)
+    suggestion_context: Optional[dict] = Field(None, description="Original suggestion context for contextual chat")
+    chat_history: Optional[List[ChatMessage]] = Field(default_factory=list, description="Previous messages in this conversation")
+
+
+class ChatResponse(BaseModel):
+    """Response model for chat endpoint."""
+    message: str = Field(..., description="AI response message")
+    timestamp: str = Field(..., description="When response was generated")
+    context_used: bool = Field(..., description="Whether suggestion context was used")
+    conversation_id: str = Field(..., description="Unique identifier for this conversation")
+
+
 # === Mock Observer Class ===
 
 class APIObserver(Observer):
@@ -1494,6 +1537,419 @@ async def generate_self_reflection(
             detail=f"Error generating self-reflection: {str(e)}"
         )
 
+
+@app.post("/suggestions/generate", response_model=SuggestionsResponse)
+async def generate_suggestions(
+    user_name: Optional[str] = None,
+    hours_back: Optional[float] = 6.0
+):
+    """Generate proactive suggestions based on recent transcription data."""
+    try:
+        start_time = time.time()
+        logger.info(f"Generating suggestions for {user_name}, analyzing last {hours_back} hours")
+        
+        # Validate parameters
+        if hours_back is not None and (hours_back <= 0 or hours_back > 168):  # Max 1 week
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="hours_back must be between 0 and 168 (1 week)"
+            )
+        
+        # Get GUM instance
+        gum_inst = await ensure_gum_instance(user_name)
+        
+        # Get ONLY high-confidence behavioral insights (GUM propositions) - NO transcription data
+        async with gum_inst._session() as session:
+            from gum.models import Proposition
+            from sqlalchemy import select, desc
+            
+            # Get top behavioral insights for pattern discovery
+            stmt = (
+                select(Proposition)
+                .where(Proposition.confidence >= 7)  # High-confidence insights only
+                .order_by(desc(Proposition.confidence), desc(Proposition.created_at))
+                .limit(100)  # Get top 100 behavioral insights
+            )
+            
+            result = await session.execute(stmt)
+            propositions = result.scalars().all()
+            
+            logger.info(f"Found {len(propositions)} high-confidence behavioral insights for pattern analysis")
+            
+            if not propositions:
+                # Return empty suggestions if no insights
+                logger.info("No behavioral insights found in database")
+                return SuggestionsResponse(
+                    suggestions=[],
+                    data_points=0,
+                    time_range_hours=0.0,
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
+            
+            # Prepare ONLY behavioral insights for AI analysis (NO screen transcriptions)
+            behavioral_insights = "\n\n# User Behavioral Pattern Analysis (GUM Insights):\n"
+            for prop in propositions:  # Use all high-confidence propositions
+                behavioral_insights += f"- {prop.text} (confidence: {prop.confidence}/10)\n"
+                # Include reasoning for pattern recognition
+                reasoning_snippet = prop.reasoning[:150] + "..." if len(prop.reasoning) > 150 else prop.reasoning
+                behavioral_insights += f"  Evidence: {reasoning_snippet}\n"
+                behavioral_insights += f"  Date: {serialize_datetime(parse_datetime(prop.created_at))}\n\n"
+            
+            # Context is PURELY behavioral insights - no recent activity transcriptions
+            enhanced_context = behavioral_insights
+            
+            logger.info(f"🔍 DEBUGGING: Using ONLY behavioral insights - {len(propositions)} propositions, NO transcriptions!")
+            logger.info(f"Prepared behavioral context data (length: {len(enhanced_context)} characters, {len(propositions)} propositions)")
+            
+            # Create the suggestions prompt for GUM-based pattern discovery
+            from gum.prompts.gum import SUGGESTIONS_PROMPT
+            
+            prompt = (
+                SUGGESTIONS_PROMPT
+                .replace("{user_name}", user_name or "User")
+                .replace("{transcription_data}", enhanced_context)  # This now contains only behavioral insights
+            )
+            
+            logger.info(f"Generated suggestions prompt (length: {len(prompt)} characters)")
+            
+            # Get the unified AI client
+            client = await get_ai_client()
+            
+            # Generate suggestions
+            logger.info("Sending suggestions request to AI...")
+            try:
+                response_content = await client.text_completion(
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=4000,
+                    temperature=0.1
+                )
+                
+                logger.info(f"Received AI response (length: {len(response_content)} characters)")
+                
+            except Exception as ai_error:
+                logger.error(f"AI completion failed: {ai_error}")
+                return SuggestionsResponse(
+                    suggestions=[],
+                    data_points=len(observations),
+                    time_range_hours=0.0,  # All data used
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
+            
+            # Parse the JSON response (handle markdown code blocks)
+            try:
+                # Strip markdown code blocks if present
+                clean_response = response_content.strip()
+                if clean_response.startswith('```json'):
+                    clean_response = clean_response[7:]  # Remove ```json
+                if clean_response.startswith('```'):
+                    clean_response = clean_response[3:]   # Remove ```
+                if clean_response.endswith('```'):
+                    clean_response = clean_response[:-3]  # Remove trailing ```
+                clean_response = clean_response.strip()
+                
+                suggestions_data = json.loads(clean_response)
+                
+                # Validate and structure the response
+                suggestions_raw = suggestions_data.get("suggestions", [])
+                
+                # Convert to proper suggestion format with validation
+                suggestions = []
+                current_time = serialize_datetime(now)
+                
+                for suggestion_data in suggestions_raw:
+                    try:
+                        # Validate required fields and provide defaults
+                        title = suggestion_data.get("title", "Unnamed Suggestion")
+                        description = suggestion_data.get("description", "")
+                        urgency = suggestion_data.get("urgency", "today")
+                        category = suggestion_data.get("category", "optimization")
+                        evidence = suggestion_data.get("evidence", "")
+                        action_items = suggestion_data.get("action_items", [])
+                        confidence = suggestion_data.get("confidence", 5)
+                        
+                        # Validate urgency values
+                        if urgency not in ["now", "today", "this_week"]:
+                            urgency = "today"
+                        
+                        # Validate category values
+                        if category not in ["workflow", "completion", "learning", "optimization", "strategic"]:
+                            category = "optimization"
+                        
+                        # Validate confidence range
+                        if not isinstance(confidence, int) or confidence < 1 or confidence > 10:
+                            confidence = 5
+                        
+                        # Ensure action_items is a list
+                        if not isinstance(action_items, list):
+                            action_items = []
+                        
+                        suggestions.append(SuggestionItem(
+                            title=title,
+                            description=description,
+                            urgency=urgency,
+                            category=category,
+                            evidence=evidence,
+                            action_items=action_items,
+                            confidence=confidence,
+                            created_at=current_time
+                        ))
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to parse suggestion: {e}")
+                        continue
+                
+                processing_time = (time.time() - start_time) * 1000
+                logger.info(f"Successfully generated {len(suggestions)} suggestions in {processing_time:.2f}ms")
+                
+                return SuggestionsResponse(
+                    suggestions=suggestions,
+                    data_points=len(propositions),  # Using behavioral insights count
+                    time_range_hours=0.0,  # All data used
+                    generated_at=current_time
+                )
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse AI response as JSON: {e}")
+                logger.error(f"Raw response: {response_content[:500]}...")
+                return SuggestionsResponse(
+                    suggestions=[],
+                    data_points=len(observations),
+                    time_range_hours=0.0,  # All data used
+                    generated_at=serialize_datetime(datetime.now(timezone.utc))
+                )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error generating suggestions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating suggestions: {str(e)}"
+        )
+
+
+async def find_related_propositions_for_chat(session, suggestion_context, recent_observations, limit=100):
+    """Find propositions related to current chat context using existing search infrastructure."""
+    
+    # Build search query from multiple sources
+    search_terms = []
+    
+    # 1. From suggestion context
+    if suggestion_context:
+        search_terms.append(suggestion_context.get('title', ''))
+        search_terms.append(suggestion_context.get('description', ''))
+        search_terms.append(' '.join(suggestion_context.get('action_items', [])))
+    
+    # 2. From recent observations (extract key entities)
+    for obs in recent_observations[-3:]:
+        # Extract app names, document titles, key activities
+        content = obs.content
+        
+        # Simple keyword extraction
+        import re
+        apps = re.findall(r'\*\*Application Name:\*\* (.+)', content)
+        docs = re.findall(r'\*\*Document:\*\* (.+)', content)
+        urls = re.findall(r'https?://([^/\s]+)', content)
+        
+        search_terms.extend(apps + docs + urls)
+    
+    # 3. Combine into search query (limit tokens for performance)
+    combined_query = ' '.join(search_terms[:20])
+    
+    if not combined_query.strip():
+        return []
+    
+    try:
+        # Use existing search infrastructure
+        from gum.db_utils import search_propositions_bm25
+        
+        related_props = await search_propositions_bm25(
+            session,
+            combined_query,
+            limit=limit,
+            mode="OR", 
+            include_observations=False,
+            enable_mmr=True,
+            enable_decay=True
+        )
+        
+        # Filter by confidence (only high-confidence propositions for chat)
+        return [(prop, score) for prop, score in related_props if prop.confidence >= 7]
+        
+    except Exception as e:
+        logger.warning(f"Failed to search related propositions for chat: {e}")
+        return []
+
+
+@app.post("/chat/suggestion", response_model=ChatResponse)
+async def chat_with_suggestion(
+    request: ChatRequest,
+    user_name: Optional[str] = None
+):
+    """Chat about a specific suggestion with full context awareness."""
+    import uuid
+    import hashlib
+    
+    try:
+        start_time = time.time()
+        logger.info(f"Starting contextual chat for {user_name}")
+        
+        # Validate message length
+        if not request.message or not request.message.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Message cannot be empty"
+            )
+        
+        # Get AI client
+        client = await get_ai_client()
+        current_time = datetime.now(timezone.utc)
+        
+        # Generate conversation ID based on suggestion context
+        if request.suggestion_context:
+            context_str = f"{request.suggestion_context.get('title', '')}{request.suggestion_context.get('description', '')}"
+            conversation_id = hashlib.md5(context_str.encode()).hexdigest()[:8]
+        else:
+            conversation_id = str(uuid.uuid4())[:8]
+        
+        # Prepare chat context
+        context_used = bool(request.suggestion_context)
+        
+        if request.suggestion_context and context_used:
+            # Use contextual chat prompt with suggestion details
+            from gum.prompts.gum import CHAT_PROMPT
+            
+            # Format chat history for prompt
+            chat_history_text = ""
+            if request.chat_history:
+                for msg in request.chat_history[-10:]:  # Last 10 messages for context
+                    role_label = "You" if msg.role == "assistant" else user_name or "User"
+                    chat_history_text += f"**{role_label}:** {msg.content}\n\n"
+            
+            # Get supporting transcription data and related propositions
+            transcription_context = ""
+            proposition_context = ""
+            try:
+                gum_inst = await ensure_gum_instance(user_name)
+                async with gum_inst._session() as session:
+                    from gum.models import Observation
+                    from sqlalchemy import select, desc
+                    from datetime import timedelta
+                    
+                    # Get recent transcriptions for additional context
+                    recent_time = current_time - timedelta(hours=6)
+                    stmt = (
+                        select(Observation)
+                        .where(
+                            Observation.created_at >= recent_time,
+                            Observation.observer_name == "Screen"
+                        )
+                        .order_by(desc(Observation.created_at))
+                        .limit(5)  # Just a few recent ones for context
+                    )
+                    result = await session.execute(stmt)
+                    recent_observations = result.scalars().all()
+                    
+                    if recent_observations:
+                        transcription_context = "\n\n".join([
+                            f"=== {serialize_datetime(parse_datetime(obs.created_at))} ===\n{obs.content}"
+                            for obs in recent_observations[-3:]  # Most recent 3
+                        ])
+                    else:
+                        transcription_context = "No recent transcription data available."
+                    
+                    # Get related propositions for cross-time context
+                    related_props = await find_related_propositions_for_chat(
+                        session, 
+                        request.suggestion_context, 
+                        recent_observations
+                    )
+                    
+                    if related_props:
+                        proposition_context = "\n\n# Historical Context (What I know about you from past observations):\n"
+                        for prop, score in related_props:
+                            # Include proposition with confidence and reasoning snippet
+                            reasoning_snippet = prop.reasoning[:100] + "..." if len(prop.reasoning) > 100 else prop.reasoning
+                            proposition_context += f"- {prop.text} (confidence: {prop.confidence}/10)\n"
+                            proposition_context += f"  Evidence: {reasoning_snippet}\n\n"
+                    else:
+                        proposition_context = "\n\n# Historical Context: No related patterns found.\n"
+                        
+            except Exception as e:
+                logger.warning(f"Could not fetch context: {e}")
+                transcription_context = "Transcription context unavailable."
+                proposition_context = ""
+            
+            # Build the contextual prompt with proposition context
+            enhanced_transcription_context = transcription_context + proposition_context
+            
+            prompt = CHAT_PROMPT.format(
+                user_name=user_name or "User",
+                suggestion_title=request.suggestion_context.get('title', 'Suggestion'),
+                suggestion_description=request.suggestion_context.get('description', ''),
+                suggestion_evidence=request.suggestion_context.get('evidence', ''),
+                action_items='\n'.join([f"- {item}" for item in request.suggestion_context.get('action_items', [])]),
+                transcription_context=enhanced_transcription_context,
+                chat_history=chat_history_text,
+                user_message=request.message
+            )
+            
+        else:
+            # Fallback to general chat without specific context
+            chat_history_text = ""
+            if request.chat_history:
+                for msg in request.chat_history[-10:]:
+                    role_label = "Assistant" if msg.role == "assistant" else user_name or "User"
+                    chat_history_text += f"{role_label}: {msg.content}\n"
+            
+            prompt = f"""You are a helpful AI assistant. Continue this conversation naturally.
+
+Previous conversation:
+{chat_history_text}
+
+{user_name or 'User'}: {request.message}
+
+Provide a helpful, conversational response:"""
+        
+        logger.info(f"Generated chat prompt (length: {len(prompt)} characters)")
+        
+        # Get AI response
+        try:
+            response_content = await client.text_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1500,
+                temperature=0.3
+            )
+            
+            logger.info(f"Received chat response (length: {len(response_content)} characters)")
+            
+        except Exception as ai_error:
+            logger.error(f"AI chat completion failed: {ai_error}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate chat response"
+            )
+        
+        processing_time = (time.time() - start_time) * 1000
+        logger.info(f"Chat response generated in {processing_time:.2f}ms")
+        
+        return ChatResponse(
+            message=response_content.strip(),
+            timestamp=serialize_datetime(current_time),
+            context_used=context_used,
+            conversation_id=conversation_id
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chat error: {str(e)}"
+        )
 
 
 # Video processing storage

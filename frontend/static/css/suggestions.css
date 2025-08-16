@@ -1,0 +1,417 @@
+/* ================================================
+   SUGGESTIONS INTERFACE - LIGHT THEME LAYOUT
+   ================================================ */
+
+/* Main Layout Container - Now integrates naturally with tab-panel */
+.suggestions-layout {
+    display: flex;
+    height: calc(100vh - 120px);
+    background: var(--bg-primary);
+    border-radius: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+}
+
+/* Override tab-panel styles for suggestions */
+.tab-panel:has(.suggestions-layout) {
+    padding: 0;
+    background: var(--bg-primary);
+}
+
+/* Fallback for browsers that don't support :has() */
+#suggestions-panel {
+    padding: 0;
+    background: var(--bg-primary);
+}
+
+/* Left Sidebar */
+.suggestions-sidebar {
+    width: 280px;
+    background: var(--bg-secondary);
+    padding: 0;
+    border-right: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.sidebar-section {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.sidebar-section:hover {
+    background: var(--bg-hover);
+}
+
+.sidebar-section.active {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--brand-primary);
+}
+
+.sidebar-section h3 {
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 500;
+    margin: 0;
+    letter-spacing: 0.02em;
+}
+
+/* Main Content Area */
+.suggestions-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    overflow: hidden;
+}
+
+/* Header Section */
+.suggestions-header {
+    padding: 2rem 2.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: white;
+}
+
+.suggestions-header h1 {
+    color: var(--text-primary);
+    font-size: 2rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.suggestions-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.suggestions-select {
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    min-width: 140px;
+    cursor: pointer;
+    transition: var(--transition-base);
+}
+
+.suggestions-select:focus {
+    outline: none;
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.btn-generate {
+    background: var(--brand-gradient);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.btn-generate:hover {
+    background: var(--brand-gradient-hover);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+/* Content Area */
+.suggestions-content {
+    flex: 1;
+    padding: 2rem 2.5rem;
+    overflow-y: auto;
+    background: var(--bg-primary);
+}
+
+/* Suggestion Cards */
+.suggestions-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    max-width: 800px;
+}
+
+.suggestion-card {
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 2rem;
+    transition: all 0.2s ease;
+    position: relative;
+    box-shadow: var(--shadow-sm);
+}
+
+.suggestion-card:hover {
+    border-color: var(--brand-primary);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+/* Card Content */
+.suggestion-title {
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0 0 1rem 0;
+    line-height: 1.4;
+}
+
+.suggestion-description {
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1.6;
+    margin-bottom: 2rem;
+}
+
+/* Open Chat Button */
+.suggestion-open-chat {
+    background: linear-gradient(135deg, #d946ef 0%, #c026d3 100%);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.suggestion-open-chat:hover {
+    background: linear-gradient(135deg, #c026d3 0%, #a21caf 100%);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.suggestion-open-chat:active {
+    transform: translateY(0);
+}
+
+/* Empty State */
+.suggestions-content .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.suggestions-content .empty-state i {
+    font-size: 4rem;
+    margin-bottom: 1.5rem;
+    color: var(--text-muted);
+}
+
+.suggestions-content .empty-state h3 {
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.suggestions-content .empty-state p {
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1.5;
+    max-width: 400px;
+}
+
+/* Loading State */
+.suggestions-content.loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 300px;
+}
+
+.suggestions-content.loading .loading {
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+/* Time Section Headers */
+.suggestions-time-section {
+    margin-bottom: 2.5rem;
+}
+
+.suggestions-time-header {
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--border-color);
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+    .suggestions-layout {
+        flex-direction: column;
+        height: auto;
+    }
+    
+    .suggestions-sidebar {
+        width: 100%;
+        display: flex;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .sidebar-section {
+        flex: 1;
+        text-align: center;
+        border-bottom: none;
+        border-right: 1px solid var(--border-light);
+    }
+    
+    .sidebar-section:last-child {
+        border-right: none;
+    }
+    
+    .sidebar-section.active {
+        border-left: none;
+        border-bottom: 3px solid var(--brand-primary);
+    }
+    
+    .suggestions-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .suggestions-controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+}
+
+@media (max-width: 768px) {
+    .suggestions-header {
+        padding: 1.5rem;
+    }
+    
+    .suggestions-content {
+        padding: 1.5rem;
+    }
+    
+    .suggestion-card {
+        padding: 1.5rem;
+    }
+    
+    .suggestions-header h1 {
+        font-size: 1.75rem;
+    }
+    
+    .suggestions-controls {
+        flex-direction: column;
+        width: 100%;
+        gap: 0.75rem;
+    }
+    
+    .suggestions-select,
+    .btn-generate {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Scrollbar Styling for Light Theme */
+.suggestions-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.suggestions-content::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+.suggestions-content::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.suggestions-content::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* Animation for card appearance */
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.suggestion-card {
+    animation: slideInUp 0.3s ease-out;
+}
+
+/* Focus states for accessibility */
+.suggestions-select:focus,
+.btn-generate:focus,
+.suggestion-open-chat:focus {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 2px;
+}
+
+.sidebar-section:focus {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: -2px;
+}
+
+/* Dark Mode Overrides */
+[data-theme="dark"] .suggestions-layout {
+    background: var(--bg-primary);
+}
+
+[data-theme="dark"] .suggestions-sidebar {
+    background: var(--bg-secondary);
+    border-right-color: var(--border-color);
+}
+
+[data-theme="dark"] .sidebar-section.active {
+    background: var(--bg-tertiary);
+}
+
+[data-theme="dark"] .suggestions-header {
+    background: var(--bg-secondary);
+    border-bottom-color: var(--border-color);
+}
+
+[data-theme="dark"] .suggestions-select {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .suggestion-card {
+    background: var(--bg-card);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .suggestions-content {
+    background: var(--bg-primary);
+}

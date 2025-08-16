@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zavion</title>
     <link rel="stylesheet" href="static/css/styles.css?v=9">
+    <link rel="stylesheet" href="static/css/suggestions.css">
+    <link rel="stylesheet" href="static/css/chat.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
@@ -50,9 +52,9 @@
                         <i class="fas fa-list-alt"></i>
                         <span title="Narrative Timeline">Narrative</span>
                     </button>
-                    <button class="tab-button" data-tab="self-reflection" onclick="window.zavionApp?.switchTab('self-reflection')">
-                        <i class="fas fa-brain"></i>
-                        Self-Reflection
+                    <button class="tab-button" data-tab="suggestions" onclick="window.zavionApp?.switchTab('suggestions')">
+                        <i class="fas fa-lightbulb"></i>
+                        Suggestions
                     </button>
                 </nav>
             </div>
@@ -208,44 +210,45 @@
                 </div>
             </div>
 
-            <!-- Self Reflection Tab -->
-            <div class="tab-panel" id="self-reflection-panel" role="tabpanel" aria-labelledby="selfReflectionTab">
-                <div class="card-header">
-                    <h2>
-                        <i class="fas fa-mirror"></i>
-                        Self Reflection
-                    </h2>
-                    <p>Generate AI-powered behavioral summaries and actionable insights for your day</p>
-                    <div class="header-actions">
-                        <div class="filter-group">
-                            <label for="reflectionDate">Date:</label>
-                            <input type="date" id="reflectionDate" class="date-input">
-                        </div>
-                        <div class="filter-group">
-                            <label for="reflectionConfidenceFilter">Min Confidence:</label>
-                            <select id="reflectionConfidenceFilter">
-                                <option value="">All</option>
-                                <option value="5">5+</option>
-                                <option value="7">7+</option>
-                                <option value="8">8+</option>
-                                <option value="9">9+</option>
-                            </select>
-                        </div>
-                        <button class="btn-primary" id="generateReflection">
-                            <i class="fas fa-magic" aria-hidden="true"></i>
-                            Generate Summary
-                        </button>
+            <!-- Suggestions Tab -->
+            <div class="tab-panel" id="suggestions-panel" role="tabpanel" aria-labelledby="suggestionsTab">
+                <div class="suggestions-layout">
+                <!-- Left Sidebar -->
+                <div class="suggestions-sidebar">
+                    <div class="sidebar-section active">
+                        <h3>Suggestions</h3>
+                    </div>
+                    <div class="sidebar-section">
+                        <h3>Active Chats</h3>
                     </div>
                 </div>
                 
-                <div class="self-reflection-section">
-                    <div class="self-reflection-content" id="selfReflectionContent">
-                        <div class="empty-state">
-                            <i class="fas fa-mirror" aria-hidden="true"></i>
-                            <h3>No reflection generated</h3>
-                            <p>Select a date and click "Generate Summary" to create a behavioral reflection</p>
+                <!-- Main Content Area -->
+                <div class="suggestions-main">
+                    <div class="suggestions-header">
+                        <h1>Suggestions</h1>
+                        <div class="suggestions-controls">
+                            <select id="suggestionsHours" class="suggestions-select">
+                                <option value="2">Last 2 hours</option>
+                                <option value="6" selected>Last 6 hours</option>
+                                <option value="12">Last 12 hours</option>
+                                <option value="24">Last 24 hours</option>
+                            </select>
+                            <button class="btn-generate" id="generateSuggestions">
+                                <i class="fas fa-magic"></i>
+                                Generate Suggestions
+                            </button>
                         </div>
                     </div>
+                    
+                    <div class="suggestions-content" id="suggestionsContent">
+                        <div class="empty-state">
+                            <i class="fas fa-lightbulb"></i>
+                            <h3>No suggestions generated</h3>
+                            <p>Click "Generate Suggestions" to get proactive insights based on your recent activity</p>
+                        </div>
+                    </div>
+                </div>
                 </div>
             </div>
         </section>
@@ -253,6 +256,63 @@
 
     <!-- Toast Notifications -->
     <div id="toast" class="toast" role="alert" aria-live="polite"></div>
+
+    <!-- Chat Modal -->
+    <div class="chat-modal" id="chatModal" style="display: none;">
+        <div class="chat-layout">
+            <!-- Left Sidebar -->
+            <div class="chat-sidebar">
+                <div class="chat-sidebar-header">
+                    <h3>Active Chats</h3>
+                    <button class="chat-close-btn" id="closeChatModal">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="chat-list" id="chatList">
+                    <!-- Active chats will be populated here -->
+                </div>
+            </div>
+            
+            <!-- Main Chat Area -->
+            <div class="chat-main">
+                <div class="chat-header" id="chatHeader">
+                    <h2 id="chatTitle">Select a chat</h2>
+                    <div class="chat-status">
+                        <span class="status-indicator"></span>
+                        <span id="chatStatus">Ready</span>
+                    </div>
+                </div>
+                
+                <div class="chat-messages" id="chatMessages">
+                    <div class="chat-welcome">
+                        <i class="fas fa-comments"></i>
+                        <h3>No chat selected</h3>
+                        <p>Select an active chat from the sidebar or start a new conversation from a suggestion.</p>
+                    </div>
+                </div>
+                
+                <div class="chat-input-area" id="chatInputArea" style="display: none;">
+                    <div class="chat-input-container">
+                        <textarea 
+                            id="chatInput" 
+                            placeholder="Type your message..." 
+                            rows="1"
+                            maxlength="2000"
+                        ></textarea>
+                        <button class="chat-send-btn" id="chatSendBtn" disabled>
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                    <div class="chat-input-footer">
+                        <span class="char-count" id="charCount">0/2000</span>
+                        <span class="typing-indicator" id="typingIndicator" style="display: none;">
+                            AI is typing...
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="static/js/app.js?v=2"></script>
 
@@ -360,3 +420,4 @@
     </script>
 </body>
 </html>
+

@@ -129,15 +129,28 @@ function startBackend() {
   }
 }
 
-// Start CLI tracking process
-function startCliTracking() {
+// Start CLI tracking process with production-grade safeguards
+async function startCliTracking() {
+  // Step 1: Prevent multiple instances
   if (isCliRunning) {
     console.log('CLI tracking already running');
-    return;
+    return { success: false, message: 'Already running' };
   }
 
   try {
     console.log('Starting CLI tracking...');
+    
+    // Step 2: Clean up any existing processes first
+    await killAllGumProcesses();
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+    
+    // Step 3: Verify no processes are running
+    const stillRunning = await checkForRunningGumProcesses();
+    if (stillRunning) {
+      console.warn('Warning: Found existing processes, attempting cleanup...');
+      await killAllGumProcesses();
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait longer
+    }
     
     // Get the correct working directory for CLI
     const cliWorkingDir = path.join(__dirname, '..', '..'); // Go up to gum root directory
@@ -236,35 +249,241 @@ function startCliTracking() {
   }
 }
 
-// Stop CLI tracking process
-function stopCliTracking() {
-  if (!isCliRunning || !cliProcess) {
-    console.log('CLI tracking not running');
-    return;
-  }
-
-  try {
-    console.log('Stopping CLI tracking...');
-    
-    // Kill the process
+// Production-grade CLI process killer
+async function killProcessTree(pid, signal = 'SIGTERM') {
+  return new Promise((resolve) => {
     if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', cliProcess.pid, '/f', '/t']);
+      // Windows: Kill process tree including all child processes
+      const killCommand = spawn('taskkill', ['/pid', pid, '/f', '/t'], { 
+        stdio: 'pipe',
+        shell: true 
+      });
+      
+      killCommand.on('close', (code) => {
+        console.log(`Process tree kill completed with code: ${code}`);
+        resolve(code === 0);
+      });
+      
+      killCommand.on('error', (error) => {
+        console.error('Kill command error:', error);
+        resolve(false);
+      });
+      
+      // Timeout after 5 seconds
+      setTimeout(() => {
+        killCommand.kill();
+        resolve(false);
+      }, 5000);
+      
     } else {
-      cliProcess.kill('SIGTERM');
+      // Unix/Linux/macOS: Kill process group
+      try {
+        process.kill(-pid, signal);
+        resolve(true);
+      } catch (error) {
+        console.error('Kill process group error:', error);
+        resolve(false);
+      }
+    }
+  });
+}
+
+// Kill only GUM CLI processes (NOT the backend!)
+async function killAllGumProcesses() {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      // Windows: Use WMIC to find and kill only processes running gum.cli
+      const findCommand = spawn('wmic', [
+        'process', 'where', 
+        'CommandLine like "%gum.cli%" or CommandLine like "%gum\\cli%"',
+        'get', 'ProcessId', '/format:value'
+      ], { 
+        stdio: 'pipe',
+        shell: true 
+      });
+      
+      let output = '';
+      findCommand.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      findCommand.on('close', (code) => {
+        // Extract PIDs from WMIC output
+        const pids = output.match(/ProcessId=(\d+)/g);
+        
+        if (pids && pids.length > 0) {
+          console.log(`Found ${pids.length} GUM CLI processes to kill`);
+          
+          // Kill each PID individually
+          const killPromises = pids.map(pidMatch => {
+            const pid = pidMatch.replace('ProcessId=', '');
+            return new Promise(killResolve => {
+              const killCmd = spawn('taskkill', ['/pid', pid, '/f', '/t'], { 
+                stdio: 'pipe',
+                shell: true 
+              });
+              killCmd.on('close', () => killResolve());
+              killCmd.on('error', () => killResolve());
+              setTimeout(() => killResolve(), 2000);
+            });
+          });
+          
+          Promise.all(killPromises).then(() => {
+            console.log('Selective GUM CLI process kill completed');
+            resolve(true);
+          });
+          
+        } else {
+          console.log('No GUM CLI processes found to kill');
+          resolve(true);
+        }
+      });
+      
+      findCommand.on('error', (error) => {
+        console.log('WMIC command failed, falling back to basic kill');
+        // Fallback: try to kill by window title or command line
+        const fallbackKill = spawn('taskkill', ['/f', '/fi', 'WINDOWTITLE eq *gum*'], { 
+          stdio: 'pipe',
+          shell: true 
+        });
+        fallbackKill.on('close', () => resolve(true));
+        fallbackKill.on('error', () => resolve(true));
+        setTimeout(() => resolve(true), 3000);
+      });
+      
+    } else {
+      // Unix: Kill processes containing 'gum.cli' (this was already correct)
+      const killCommand = spawn('pkill', ['-f', 'gum.cli'], { 
+        stdio: 'pipe' 
+      });
+      
+      killCommand.on('close', (code) => {
+        console.log(`GUM CLI process kill completed with code: ${code}`);
+        resolve(true);
+      });
+      
+      killCommand.on('error', () => {
+        resolve(true);
+      });
     }
     
+    // Timeout after 8 seconds (increased for WMIC)
+    setTimeout(() => resolve(true), 8000);
+  });
+}
+
+// Stop CLI tracking process with production-grade cleanup
+async function stopCliTracking() {
+  console.log('Stopping CLI tracking...');
+  
+  try {
+    // Step 1: Graceful shutdown attempt
+    if (cliProcess && !cliProcess.killed) {
+      console.log('Attempting graceful shutdown...');
+      
+      if (process.platform === 'win32') {
+        // Send Ctrl+C to gracefully stop the process
+        cliProcess.kill('SIGINT');
+      } else {
+        cliProcess.kill('SIGTERM');
+      }
+      
+      // Wait up to 3 seconds for graceful shutdown
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    
+    // Step 2: Force kill process tree if still running
+    if (cliProcess && !cliProcess.killed) {
+      console.log('Graceful shutdown failed, force killing process tree...');
+      await killProcessTree(cliProcess.pid, 'SIGKILL');
+    }
+    
+    // Step 3: Nuclear option - kill all Python processes (backup)
+    console.log('Ensuring all GUM processes are terminated...');
+    await killAllGumProcesses();
+    
+    // Step 4: Clean up state
     isCliRunning = false;
     cliProcess = null;
+    
+    // Step 5: Verify no processes are running
+    setTimeout(async () => {
+      const stillRunning = await checkForRunningGumProcesses();
+      if (stillRunning) {
+        console.warn('Warning: Some GUM processes may still be running');
+      } else {
+        console.log('All CLI processes successfully terminated');
+      }
+    }, 1000);
     
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('cli-status', { running: false, message: 'Tracking stopped' });
     }
     
-    console.log('CLI tracking stopped');
-    
   } catch (error) {
     console.error('Error stopping CLI tracking:', error);
+    // Even if there's an error, ensure state is clean
+    isCliRunning = false;
+    cliProcess = null;
   }
+}
+
+// Check if any GUM CLI processes are still running (NOT backend!)
+async function checkForRunningGumProcesses() {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      // Windows: Use WMIC to check specifically for gum.cli processes
+      const checkCommand = spawn('wmic', [
+        'process', 'where', 
+        'CommandLine like "%gum.cli%" or CommandLine like "%gum\\cli%"',
+        'get', 'ProcessId', '/format:value'
+      ], { 
+        stdio: 'pipe',
+        shell: true 
+      });
+      
+      let output = '';
+      checkCommand.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      checkCommand.on('close', () => {
+        // Check if any ProcessId entries exist
+        const hasGumProcesses = /ProcessId=\d+/.test(output);
+        resolve(hasGumProcesses);
+      });
+      
+      checkCommand.on('error', () => {
+        // Fallback: check for any python processes and assume they might be CLI
+        const fallbackCheck = spawn('tasklist', ['/fi', 'imagename eq python.exe'], { 
+          stdio: 'pipe',
+          shell: true 
+        });
+        
+        let fallbackOutput = '';
+        fallbackCheck.stdout.on('data', (data) => {
+          fallbackOutput += data.toString();
+        });
+        
+        fallbackCheck.on('close', () => {
+          // Conservative check - if there are multiple python processes, assume CLI might be running
+          const pythonCount = (fallbackOutput.match(/python\.exe/g) || []).length;
+          resolve(pythonCount > 1); // More than just the backend
+        });
+        
+        fallbackCheck.on('error', () => resolve(false));
+      });
+      
+      setTimeout(() => resolve(false), 3000);
+      
+    } else {
+      // Unix: Check specifically for gum.cli processes (this was already correct)
+      const checkCommand = spawn('pgrep', ['-f', 'gum.cli'], { stdio: 'pipe' });
+      checkCommand.on('close', (code) => resolve(code === 0));
+      checkCommand.on('error', () => resolve(false));
+      setTimeout(() => resolve(false), 2000);
+    }
+  });
 }
 
 // Stop Python backend process
@@ -373,34 +592,91 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
-  // Clean up backend process before quitting
-  if (pythonProcess) {
-    stopBackend();
+app.on('before-quit', async () => {
+  console.log('App quitting, cleaning up processes...');
+  
+  // Clean up all processes before quitting
+  try {
+    if (cliProcess || isCliRunning) {
+      console.log('Stopping CLI tracking...');
+      await stopCliTracking();
+    }
+    
+    if (pythonProcess || isBackendRunning) {
+      console.log('Stopping backend...');
+      stopBackend();
+    }
+    
+    // Selective cleanup - only kill CLI processes, preserve backend
+    console.log('Final cleanup - killing any remaining CLI processes...');
+    await killAllGumProcesses();
+    
+  } catch (error) {
+    console.error('Error during app cleanup:', error);
   }
 });
 
-// Handle app quit
-app.on('quit', () => {
-  if (pythonProcess) {
-    stopBackend();
+// Handle app quit with emergency cleanup
+app.on('quit', async () => {
+  console.log('App quit event - emergency cleanup...');
+  
+  try {
+    // Emergency cleanup - only CLI processes, preserve backend
+    await killAllGumProcesses();
+    console.log('Emergency CLI cleanup completed');
+  } catch (error) {
+    console.error('Emergency cleanup failed:', error);
   }
-  if (cliProcess) {
-    stopCliTracking();
+});
+
+// Production-grade IPC handlers for CLI tracking
+ipcMain.handle('start-cli-tracking', async () => {
+  try {
+    console.log('IPC: Starting CLI tracking...');
+    const result = await startCliTracking();
+    console.log('IPC: CLI tracking start result:', result);
+    return result || { success: true };
+  } catch (error) {
+    console.error('IPC: Failed to start CLI tracking:', error);
+    return { success: false, message: error.message };
   }
 });
 
-// IPC handlers for CLI tracking
-ipcMain.handle('start-cli-tracking', () => {
-  startCliTracking();
-  return { success: true };
+ipcMain.handle('stop-cli-tracking', async () => {
+  try {
+    console.log('IPC: Stopping CLI tracking...');
+    await stopCliTracking();
+    console.log('IPC: CLI tracking stopped successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('IPC: Failed to stop CLI tracking:', error);
+    return { success: false, message: error.message };
+  }
 });
 
-ipcMain.handle('stop-cli-tracking', () => {
-  stopCliTracking();
-  return { success: true };
-});
-
-ipcMain.handle('get-cli-status', () => {
-  return { running: isCliRunning };
+ipcMain.handle('get-cli-status', async () => {
+  try {
+    // Also check for actual running processes, not just our flag
+    const actuallyRunning = await checkForRunningGumProcesses();
+    const reported = { running: isCliRunning, actualProcesses: actuallyRunning };
+    
+    // If there's a mismatch, correct our state
+    if (isCliRunning && !actuallyRunning) {
+      console.warn('State mismatch: CLI marked as running but no processes found');
+      isCliRunning = false;
+      cliProcess = null;
+    } else if (!isCliRunning && actuallyRunning) {
+      console.warn('State mismatch: CLI marked as stopped but processes still running');
+      // Don't auto-correct this one, let user handle it
+    }
+    
+    return { 
+      running: isCliRunning, 
+      verified: actuallyRunning,
+      consistent: isCliRunning === actuallyRunning
+    };
+  } catch (error) {
+    console.error('IPC: Failed to get CLI status:', error);
+    return { running: false, error: error.message };
+  }
 });

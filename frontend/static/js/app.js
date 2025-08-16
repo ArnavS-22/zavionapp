@@ -209,7 +209,7 @@ class ZavionApp {
         this.setupPropositionsListeners();
         this.setupTimelineListeners();
         this.setupNarrativeTimelineListeners();
-        this.setupSelfReflectionListeners();
+        this.setupSuggestionsListeners();
         await this.checkConnection();
         this.updateConnectionStatus();
         
@@ -217,7 +217,6 @@ class ZavionApp {
         const today = new Date().toISOString().split('T')[0];
         document.getElementById('timelineDate').value = today;
         document.getElementById('narrativeTimelineDate').value = today;
-        document.getElementById('reflectionDate').value = today;
     }
 
     /**
@@ -1432,8 +1431,9 @@ class ZavionApp {
             case 'narrative':
                 this.loadNarrativeTimeline();
                 break;
-            case 'self-reflection':
-                // Load self-reflection content if needed
+            case 'suggestions':
+                // Auto-generate suggestions when tab opens
+                this.generateSuggestions();
                 break;
             // 'dashboard' tab removed; Home CTA routes to 'timeline'
         }
@@ -1732,27 +1732,20 @@ class ZavionApp {
         }
     }
 
-    setupSelfReflectionListeners() {
-        const generateReflectionBtn = document.getElementById('generateReflection');
-        const reflectionDateInput = document.getElementById('reflectionDate');
-        const reflectionConfidenceFilter = document.getElementById('reflectionConfidenceFilter');
+    setupSuggestionsListeners() {
+        const generateSuggestionsBtn = document.getElementById('generateSuggestions');
+        const suggestionsHoursSelect = document.getElementById('suggestionsHours');
 
-        if (generateReflectionBtn) {
-            generateReflectionBtn.addEventListener('click', () => this.generateReflection());
+        if (generateSuggestionsBtn) {
+            generateSuggestionsBtn.addEventListener('click', () => this.generateSuggestions());
         }
 
-        if (reflectionDateInput) {
-            // Set default date to today
-            const today = new Date().toISOString().split('T')[0];
-            reflectionDateInput.value = today;
-        }
-
-        if (reflectionConfidenceFilter) {
-            reflectionConfidenceFilter.addEventListener('change', () => {
-                // Auto-regenerate reflection when filter changes (if reflection is already loaded)
-                const content = document.getElementById('selfReflectionContent');
+        if (suggestionsHoursSelect) {
+            suggestionsHoursSelect.addEventListener('change', () => {
+                // Auto-regenerate suggestions when hours filter changes (if suggestions are already loaded)
+                const content = document.getElementById('suggestionsContent');
                 if (content && !content.querySelector('.empty-state')) {
-                    this.generateReflection();
+                    this.generateSuggestions();
                 }
             });
         }
@@ -2157,33 +2150,24 @@ class ZavionApp {
         `;
     }
 
-    async generateReflection() {
-        const date = document.getElementById('reflectionDate').value;
-        const confidenceFilter = document.getElementById('reflectionConfidenceFilter').value;
+    async generateSuggestions() {
+        const hoursBack = document.getElementById('suggestionsHours').value || 6;
         
-        if (!date) {
-            this.showToast('Please select a date', 'error');
-            return;
-        }
-
-        const content = document.getElementById('selfReflectionContent');
+        const content = document.getElementById('suggestionsContent');
         content.innerHTML = `
             <div class="loading">
-                <div class="text-shimmer">Generating your behavioral reflection...</div>
+                <div class="text-shimmer">Generating your proactive suggestions...</div>
             </div>
         `;
         content.classList.add('loading');
 
         try {
             const params = new URLSearchParams({
-                date: date
+                hours_back: hoursBack,
+                user_name: 'Arnav Sharma'
             });
-            
-            if (confidenceFilter) {
-                params.append('confidence_min', confidenceFilter);
-            }
 
-            const response = await fetch(`${this.apiBaseUrl}/propositions/reflection/generate?${params}`, {
+            const response = await fetch(`${this.apiBaseUrl}/suggestions/generate?${params}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -2194,110 +2178,538 @@ class ZavionApp {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            const reflectionData = await response.json();
+            const suggestionsData = await response.json();
             
-            // Display the reflection
-            this.displayReflection(reflectionData);
+            // Display the suggestions
+            this.displaySuggestions(suggestionsData);
             
         } catch (error) {
-            console.error('Error generating reflection:', error);
+            console.error('Error generating suggestions:', error);
             content.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <h3>Error generating reflection</h3>
+                    <h3>Error generating suggestions</h3>
                     <p>${error.message}</p>
                 </div>
             `;
-            this.showToast('Failed to generate reflection', 'error');
+            this.showToast('Failed to generate suggestions', 'error');
         } finally {
             content.classList.remove('loading');
         }
     }
 
-    displayReflection(reflectionData) {
-        const content = document.getElementById('selfReflectionContent');
+    displaySuggestions(suggestionsData) {
+        const content = document.getElementById('suggestionsContent');
         
-        // Create stats section
-        const statsHtml = `
-            <div class="reflection-stats">
-                <div class="reflection-stat">
-                    <div class="stat-value">${reflectionData.data_points}</div>
-                    <div class="stat-label">Data Points Analyzed</div>
-                </div>
-                <div class="reflection-stat">
-                    <div class="stat-value">${reflectionData.specific_insights.length}</div>
-                    <div class="stat-label">Specific Insights</div>
-                </div>
-                <div class="reflection-stat">
-                    <div class="stat-value">${new Date(reflectionData.generated_at).toLocaleString()}</div>
-                    <div class="stat-label">Generated At</div>
-                </div>
-            </div>
-        `;
-
-        // Create behavioral pattern section
-        const behavioralPatternHtml = `
-            <div class="behavioral-pattern-section">
-                <h3>
-                    <i class="fas fa-chart-line"></i>
-                    Overall Behavioral Pattern
-                </h3>
-                <div class="behavioral-pattern-content">
-                    ${reflectionData.behavioral_pattern}
-                </div>
-            </div>
-        `;
-
-        // Create specific insights section
-        let insightsHtml = `
-            <div class="specific-insights-section">
-                <h3>
+        if (!suggestionsData.suggestions || suggestionsData.suggestions.length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
                     <i class="fas fa-lightbulb"></i>
-                    Specific Insights & Suggestions
-                </h3>
+                    <h3>No suggestions available</h3>
+                    <p>No actionable suggestions found based on your recent activity. Try increasing the time range or continue using the system to generate more data.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Group suggestions by urgency/time
+        const suggestionsByTime = {
+            'now': [],
+            'today': [],
+            'this_week': []
+        };
+
+        suggestionsData.suggestions.forEach(suggestion => {
+            const urgency = suggestion.urgency || 'today';
+            if (suggestionsByTime[urgency]) {
+                suggestionsByTime[urgency].push(suggestion);
+            } else {
+                suggestionsByTime['today'].push(suggestion);
+            }
+        });
+
+        let suggestionsHtml = '';
+
+        // Create sections for each time group
+        if (suggestionsByTime.now.length > 0) {
+            suggestionsHtml += this.createSuggestionsTimeSection('Now', suggestionsByTime.now);
+        }
+        
+        if (suggestionsByTime.today.length > 0) {
+            suggestionsHtml += this.createSuggestionsTimeSection('Today', suggestionsByTime.today);
+        }
+        
+        if (suggestionsByTime.this_week.length > 0) {
+            suggestionsHtml += this.createSuggestionsTimeSection('This Week', suggestionsByTime.this_week);
+        }
+
+        content.innerHTML = suggestionsHtml;
+        
+        // Add event listeners to Open Chat buttons
+        this.setupSuggestionChatButtons();
+        
+        this.showToast('Suggestions generated successfully!', 'success');
+    }
+
+    createSuggestionsTimeSection(timeLabel, suggestions) {
+        let sectionHtml = `
+            <div class="suggestions-time-section">
+                <h3 class="suggestions-time-header">${timeLabel}</h3>
+                <div class="suggestions-grid">
         `;
 
-        if (reflectionData.specific_insights && reflectionData.specific_insights.length > 0) {
-            insightsHtml += '<div class="insights-grid">';
+        suggestions.forEach((suggestion, index) => {
+            // Clean the description for safe HTML insertion
+            const cleanDescription = suggestion.description.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            const suggestionJson = JSON.stringify(suggestion).replace(/"/g, '&quot;');
             
-            reflectionData.specific_insights.forEach(insight => {
-                insightsHtml += `
-                    <div class="insight-card">
-                        <div class="insight-header">
-                            <span class="insight-category">${insight.category}</span>
-                            <span class="insight-confidence">Confidence: ${insight.confidence}/10</span>
+            sectionHtml += `
+                <div class="suggestion-card" data-suggestion-id="${index}">
+                    <h4 class="suggestion-title">${suggestion.title}</h4>
+                    
+                    <div class="suggestion-description">
+                        ${suggestion.description}
+                </div>
+                    
+                    <button class="suggestion-open-chat" data-suggestion="${suggestionJson}">
+                        <i class="fas fa-comments"></i>
+                        Open Chat
+                    </button>
+            </div>
+        `;
+        });
+
+        sectionHtml += `
+                </div>
+            </div>
+        `;
+
+        return sectionHtml;
+    }
+
+    setupSuggestionChatButtons() {
+        const chatButtons = document.querySelectorAll('.suggestion-open-chat');
+        chatButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                try {
+                    const suggestionData = JSON.parse(e.target.closest('.suggestion-open-chat').dataset.suggestion.replace(/&quot;/g, '"'));
+                    this.openSuggestionChat(suggestionData);
+                } catch (error) {
+                    console.error('Error parsing suggestion data:', error);
+                    this.showToast('Error opening chat', 'error');
+                }
+            });
+        });
+    }
+
+    openSuggestionChat(suggestion) {
+        console.log('Opening chat for suggestion:', suggestion);
+        
+        // Open the chat modal
+        this.openChatModal();
+        
+        // Initialize or switch to this chat
+        this.initializeSuggestionChat(suggestion);
+    }
+
+    // ================================
+    // Chat System Implementation
+    // ================================
+    
+    openChatModal() {
+        const chatModal = document.getElementById('chatModal');
+        if (chatModal) {
+            chatModal.style.display = 'flex';
+            chatModal.setAttribute('aria-hidden', 'false');
+            
+            // Setup modal event listeners if not already done
+            if (!this.chatModalInitialized) {
+                this.setupChatModalListeners();
+                this.chatModalInitialized = true;
+            }
+        }
+    }
+    
+    closeChatModal() {
+        const chatModal = document.getElementById('chatModal');
+        if (chatModal) {
+            chatModal.style.display = 'none';
+            chatModal.setAttribute('aria-hidden', 'true');
+        }
+    }
+    
+    setupChatModalListeners() {
+        // Close button
+        const closeBtn = document.getElementById('closeChatModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.closeChatModal());
+        }
+        
+        // Close on backdrop click
+        const chatModal = document.getElementById('chatModal');
+        if (chatModal) {
+            chatModal.addEventListener('click', (e) => {
+                if (e.target === chatModal) {
+                    this.closeChatModal();
+                }
+            });
+        }
+        
+        // Escape key to close
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && chatModal && chatModal.style.display === 'flex') {
+                this.closeChatModal();
+            }
+        });
+        
+        // Chat input handling
+        const chatInput = document.getElementById('chatInput');
+        const chatSendBtn = document.getElementById('chatSendBtn');
+        
+        if (chatInput) {
+            // Auto-resize textarea
+            chatInput.addEventListener('input', () => {
+                this.updateCharCount();
+                this.autoResizeTextarea(chatInput);
+                this.toggleSendButton();
+            });
+            
+            // Send on Enter (but not Shift+Enter)
+            chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.sendChatMessage();
+                }
+            });
+        }
+        
+        if (chatSendBtn) {
+            chatSendBtn.addEventListener('click', () => this.sendChatMessage());
+        }
+    }
+    
+    updateCharCount() {
+        const chatInput = document.getElementById('chatInput');
+        const charCount = document.getElementById('charCount');
+        
+        if (chatInput && charCount) {
+            const length = chatInput.value.length;
+            charCount.textContent = `${length}/2000`;
+            
+            // Update styling based on character count
+            charCount.classList.remove('warning', 'error');
+            if (length > 1800) {
+                charCount.classList.add('error');
+            } else if (length > 1500) {
+                charCount.classList.add('warning');
+            }
+        }
+    }
+    
+    autoResizeTextarea(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    }
+    
+    toggleSendButton() {
+        const chatInput = document.getElementById('chatInput');
+        const chatSendBtn = document.getElementById('chatSendBtn');
+        
+        if (chatInput && chatSendBtn) {
+            const hasText = chatInput.value.trim().length > 0;
+            const withinLimit = chatInput.value.length <= 2000;
+            chatSendBtn.disabled = !hasText || !withinLimit;
+        }
+    }
+    
+    initializeSuggestionChat(suggestion) {
+        // Store current chat context
+        this.currentChatContext = {
+            suggestion: suggestion,
+            messages: [],
+            conversationId: null
+        };
+        
+        // Update chat header
+        const chatTitle = document.getElementById('chatTitle');
+        if (chatTitle) {
+            chatTitle.textContent = suggestion.title;
+        }
+        
+        // Show input area
+        const chatInputArea = document.getElementById('chatInputArea');
+        if (chatInputArea) {
+            chatInputArea.style.display = 'block';
+        }
+        
+        // Clear and setup messages area
+        this.displayChatWelcome(suggestion);
+        
+        // Add to chat list sidebar
+        this.addToActiveChatsList(suggestion);
+        
+        // Focus on input
+        const chatInput = document.getElementById('chatInput');
+        if (chatInput) {
+            chatInput.focus();
+        }
+    }
+    
+    displayChatWelcome(suggestion) {
+        const chatMessages = document.getElementById('chatMessages');
+        if (!chatMessages) return;
+        
+        const welcomeHtml = `
+            <div class="chat-message assistant">
+                <div class="message-content">
+                    <p><strong>${suggestion.title}</strong></p>
+                    <p>${suggestion.description}</p>
+                    
+                    ${suggestion.action_items && suggestion.action_items.length > 0 ? `
+                        <div style="margin-top: 1rem;">
+                            <strong>Suggested Actions:</strong>
+                            <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+                                ${suggestion.action_items.map(item => `<li>${item}</li>`).join('')}
+                            </ul>
                         </div>
-                        <div class="insight-content">
-                            <div class="insight-text">${insight.insight}</div>
-                            <div class="insight-action">💡 ${insight.action}</div>
+                    ` : ''}
+                    
+                    <p style="margin-top: 1rem; font-style: italic; color: var(--text-secondary);">
+                        Hi! I'm here to help you with this suggestion. Feel free to ask questions or let me know how you'd like to proceed.
+                    </p>
+                </div>
+                <div class="message-meta">
+                    <span class="message-time">${this.getTimeAgo(suggestion.created_at)}</span>
                         </div>
                     </div>
                 `;
+        
+        chatMessages.innerHTML = welcomeHtml;
+        this.scrollToBottom(chatMessages);
+    }
+    
+    addToActiveChatsList(suggestion) {
+        const chatList = document.getElementById('chatList');
+        if (!chatList) return;
+        
+        // Check if this chat already exists
+        const existingChat = chatList.querySelector(`[data-chat-id="${suggestion.title}"]`);
+        if (existingChat) {
+            // Mark as active
+            chatList.querySelectorAll('.chat-list-item').forEach(item => item.classList.remove('active'));
+            existingChat.classList.add('active');
+            return;
+        }
+        
+        // Create new chat list item
+        const chatItem = document.createElement('div');
+        chatItem.className = 'chat-list-item active';
+        chatItem.dataset.chatId = suggestion.title;
+        
+        const preview = suggestion.description.length > 60 
+            ? suggestion.description.substring(0, 60) + '...'
+            : suggestion.description;
+        
+        chatItem.innerHTML = `
+            <div class="chat-item-title">${suggestion.title}</div>
+            <div class="chat-item-preview">${preview}</div>
+            <div class="chat-item-time">${this.getTimeAgo(suggestion.created_at)}</div>
+        `;
+        
+        // Add click handler
+        chatItem.addEventListener('click', () => {
+            this.switchToChat(suggestion);
+        });
+        
+        // Mark other chats as inactive
+        chatList.querySelectorAll('.chat-list-item').forEach(item => item.classList.remove('active'));
+        
+        // Add to top of list
+        chatList.insertBefore(chatItem, chatList.firstChild);
+        
+        // Remove empty state if present
+        const emptyState = chatList.querySelector('.chat-list-empty');
+        if (emptyState) {
+            emptyState.remove();
+        }
+    }
+    
+    switchToChat(suggestion) {
+        // Update active chat in sidebar
+        const chatList = document.getElementById('chatList');
+        if (chatList) {
+            chatList.querySelectorAll('.chat-list-item').forEach(item => {
+                item.classList.remove('active');
+                if (item.dataset.chatId === suggestion.title) {
+                    item.classList.add('active');
+                }
+            });
+        }
+        
+        // Load chat context
+        this.initializeSuggestionChat(suggestion);
+    }
+    
+    async sendChatMessage() {
+        const chatInput = document.getElementById('chatInput');
+        if (!chatInput || !this.currentChatContext) return;
+        
+        const message = chatInput.value.trim();
+        if (!message) return;
+        
+        // Disable input while processing
+        chatInput.disabled = true;
+        const chatSendBtn = document.getElementById('chatSendBtn');
+        if (chatSendBtn) {
+            chatSendBtn.disabled = true;
+        }
+        
+        try {
+            // Add user message to UI
+            this.addMessageToChat('user', message);
+            
+            // Clear input
+            chatInput.value = '';
+            this.updateCharCount();
+            this.autoResizeTextarea(chatInput);
+            
+            // Show typing indicator
+            this.showTypingIndicator();
+            
+            // Prepare chat request
+            const chatRequest = {
+                message: message,
+                suggestion_context: this.currentChatContext.suggestion,
+                chat_history: this.currentChatContext.messages.slice(-10) // Last 10 messages
+            };
+            
+            // Send to backend
+            const response = await fetch(`${this.apiBaseUrl}/chat/suggestion?user_name=Arnav Sharma`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(chatRequest)
             });
             
-            insightsHtml += '</div>';
-        } else {
-            insightsHtml += `
-                <div class="empty-state">
-                    <i class="fas fa-info-circle"></i>
-                    <h3>No specific insights available</h3>
-                    <p>Try selecting a different date or lowering the confidence filter</p>
-                </div>
-            `;
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const chatResponse = await response.json();
+            
+            // Hide typing indicator
+            this.hideTypingIndicator();
+            
+            // Add assistant response to UI
+            this.addMessageToChat('assistant', chatResponse.message);
+            
+            // Store conversation ID
+            if (chatResponse.conversation_id) {
+                this.currentChatContext.conversationId = chatResponse.conversation_id;
+            }
+            
+        } catch (error) {
+            console.error('Error sending chat message:', error);
+            this.hideTypingIndicator();
+            this.addMessageToChat('assistant', 'Sorry, I encountered an error processing your message. Please try again.');
+            this.showToast('Failed to send message', 'error');
+        } finally {
+            // Re-enable input
+            chatInput.disabled = false;
+            chatInput.focus();
+            this.toggleSendButton();
         }
-
-        insightsHtml += '</div>';
-
-        // Combine all sections
-        content.innerHTML = `
-            <div class="reflection-generated">
-                ${statsHtml}
-                ${behavioralPatternHtml}
-                ${insightsHtml}
+    }
+    
+    addMessageToChat(role, content) {
+        const chatMessages = document.getElementById('chatMessages');
+        if (!chatMessages) return;
+        
+        const timestamp = new Date().toISOString();
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `chat-message ${role}`;
+        
+        messageDiv.innerHTML = `
+            <div class="message-content">${this.formatMessageContent(content)}</div>
+            <div class="message-meta">
+                <span class="message-time">Just now</span>
             </div>
         `;
 
-        this.showToast('Reflection generated successfully!', 'success');
+        chatMessages.appendChild(messageDiv);
+        this.scrollToBottom(chatMessages);
+        
+        // Store in chat context
+        if (this.currentChatContext) {
+            this.currentChatContext.messages.push({
+                role: role,
+                content: content,
+                timestamp: timestamp
+            });
+        }
+    }
+    
+    formatMessageContent(content) {
+        // Basic markdown-style formatting
+        return content
+            .replace(/\n/g, '<br>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>');
+    }
+    
+    showTypingIndicator() {
+        const typingIndicator = document.getElementById('typingIndicator');
+        const statusIndicator = document.querySelector('.status-indicator');
+        const chatStatus = document.getElementById('chatStatus');
+        
+        if (typingIndicator) {
+            typingIndicator.style.display = 'flex';
+        }
+        
+        if (statusIndicator) {
+            statusIndicator.classList.add('typing');
+        }
+        
+        if (chatStatus) {
+            chatStatus.textContent = 'Thinking...';
+        }
+    }
+    
+    hideTypingIndicator() {
+        const typingIndicator = document.getElementById('typingIndicator');
+        const statusIndicator = document.querySelector('.status-indicator');
+        const chatStatus = document.getElementById('chatStatus');
+        
+        if (typingIndicator) {
+            typingIndicator.style.display = 'none';
+        }
+        
+        if (statusIndicator) {
+            statusIndicator.classList.remove('typing');
+        }
+        
+        if (chatStatus) {
+            chatStatus.textContent = 'Ready';
+        }
+    }
+    
+    scrollToBottom(element) {
+        if (element) {
+            element.scrollTop = element.scrollHeight;
+        }
+    }
+
+    getTimeAgo(timestamp) {
+        const now = new Date();
+        const time = new Date(timestamp);
+        const diffInSeconds = Math.floor((now - time) / 1000);
+        
+        if (diffInSeconds < 60) return 'Just now';
+        if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} min ago`;
+        if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hr ago`;
+        return `${Math.floor(diffInSeconds / 86400)} days ago`;
     }
 
     // Dashboard functionality
