@@ -1432,8 +1432,8 @@ class ZavionApp {
                 this.loadNarrativeTimeline();
                 break;
             case 'suggestions':
-                // Auto-generate suggestions when tab opens
-                this.generateSuggestions();
+                // Initialize real-time suggestion stream
+                this.initializeSuggestionStream();
                 break;
             // 'dashboard' tab removed; Home CTA routes to 'timeline'
         }
@@ -1733,22 +1733,16 @@ class ZavionApp {
     }
 
     setupSuggestionsListeners() {
-        const generateSuggestionsBtn = document.getElementById('generateSuggestions');
-        const suggestionsHoursSelect = document.getElementById('suggestionsHours');
-
-        if (generateSuggestionsBtn) {
-            generateSuggestionsBtn.addEventListener('click', () => this.generateSuggestions());
-        }
-
-        if (suggestionsHoursSelect) {
-            suggestionsHoursSelect.addEventListener('change', () => {
-                // Auto-regenerate suggestions when hours filter changes (if suggestions are already loaded)
-                const content = document.getElementById('suggestionsContent');
-                if (content && !content.querySelector('.empty-state')) {
-                    this.generateSuggestions();
-                }
-            });
-        }
+        // SSE-based suggestion system - no manual generation needed
+        // The system automatically generates suggestions when high-confidence insights are detected
+        
+        // Set up cleanup for SSE connections on page unload
+        window.addEventListener('beforeunload', () => {
+            if (this.suggestionEventSource) {
+                this.suggestionEventSource.close();
+                console.log('SSE connection closed on page unload');
+            }
+        });
     }
 
     /**
@@ -2150,52 +2144,312 @@ class ZavionApp {
         `;
     }
 
-    async generateSuggestions() {
-        const hoursBack = document.getElementById('suggestionsHours').value || 6;
+    // =============================================================================
+    // GUMBO REAL-TIME SUGGESTION SYSTEM (SSE)
+    // =============================================================================
         
+    initializeSuggestionStream() {
         const content = document.getElementById('suggestionsContent');
-        content.innerHTML = `
-            <div class="loading">
-                <div class="text-shimmer">Generating your proactive suggestions...</div>
-            </div>
-        `;
-        content.classList.add('loading');
+        if (!content) return;
+        
+        this.updateSuggestionUI('connecting');
+        this.connectSuggestionStream();
+    }
+
+    connectSuggestionStream() {
+        const content = document.getElementById('suggestionsContent');
+        if (!content) return;
 
         try {
-            const params = new URLSearchParams({
-                hours_back: hoursBack,
-                user_name: 'Arnav Sharma'
-            });
+            // Close existing connection if any
+            if (this.suggestionEventSource) {
+                this.suggestionEventSource.close();
+            }
 
-            const response = await fetch(`${this.apiBaseUrl}/suggestions/generate?${params}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
+            // Create new SSE connection
+            this.suggestionEventSource = new EventSource(`${this.apiBaseUrl}/suggestions/stream`);
+            
+            // Connection opened
+            this.suggestionEventSource.onopen = () => {
+                console.log('✅ Suggestion stream connected');
+                this.updateSuggestionUI('monitoring');
+                this.suggestionReconnectAttempts = 0;
+            };
+
+            // Handle suggestion batch events
+            this.suggestionEventSource.addEventListener('suggestion_batch', (event) => {
+                try {
+                    const batch = JSON.parse(event.data);
+                    console.log('🎯 Received suggestion batch:', batch);
+                    this.displaySuggestionBatch(batch);
+                } catch (error) {
+                    console.error('Error parsing suggestion batch:', error);
                 }
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            // Handle heartbeat events
+            this.suggestionEventSource.addEventListener('heartbeat', (event) => {
+                try {
+                    const heartbeat = JSON.parse(event.data);
+                    console.log('💓 Suggestion stream heartbeat:', heartbeat);
+                    // Update connection status if needed
+                } catch (error) {
+                    console.error('Error parsing heartbeat:', error);
+                }
+            });
 
-            const suggestionsData = await response.json();
-            
-            // Display the suggestions
-            this.displaySuggestions(suggestionsData);
+            // Handle rate limit events
+            this.suggestionEventSource.addEventListener('rate_limited', (event) => {
+                try {
+                    const rateLimitData = JSON.parse(event.data);
+                    console.log('⏰ Suggestion generation rate limited:', rateLimitData);
+                    this.updateSuggestionUI('rate_limited', rateLimitData);
+                } catch (error) {
+                    console.error('Error parsing rate limit event:', error);
+                }
+            });
+
+            // Handle error events
+            this.suggestionEventSource.addEventListener('error', (event) => {
+                try {
+                    const errorData = JSON.parse(event.data);
+                    console.error('❌ Suggestion stream error:', errorData);
+                    this.updateSuggestionUI('error', errorData);
+                } catch (error) {
+                    console.error('Error parsing error event:', error);
+                }
+            });
+
+            // Connection error
+            this.suggestionEventSource.onerror = (event) => {
+                console.error('❌ Suggestion stream connection error:', event);
+                
+                if (this.suggestionEventSource.readyState === EventSource.CLOSED) {
+                    this.handleSuggestionStreamReconnect();
+                }
+            };
             
         } catch (error) {
-            console.error('Error generating suggestions:', error);
+            console.error('Failed to create suggestion stream:', error);
+            this.updateSuggestionUI('error', { message: error.message });
+        }
+    }
+
+    handleSuggestionStreamReconnect() {
+        const maxAttempts = 5;
+        const baseDelay = 1000; // 1 second
+
+        if (!this.suggestionReconnectAttempts) {
+            this.suggestionReconnectAttempts = 0;
+        }
+
+        if (this.suggestionReconnectAttempts >= maxAttempts) {
+            console.error('Max reconnection attempts reached for suggestion stream');
+            this.updateSuggestionUI('disconnected');
+            return;
+        }
+
+        this.suggestionReconnectAttempts++;
+        const delay = baseDelay * Math.pow(2, this.suggestionReconnectAttempts - 1); // Exponential backoff
+
+        console.log(`🔄 Reconnecting suggestion stream in ${delay}ms (attempt ${this.suggestionReconnectAttempts}/${maxAttempts})`);
+        
+        this.updateSuggestionUI('reconnecting', {
+            attempt: this.suggestionReconnectAttempts,
+            maxAttempts: maxAttempts
+        });
+
+        setTimeout(() => {
+            this.connectSuggestionStream();
+        }, delay);
+    }
+
+    updateSuggestionUI(status, data = null) {
+        const content = document.getElementById('suggestionsContent');
+        if (!content) return;
+
+        switch (status) {
+            case 'connecting':
             content.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <h3>Error generating suggestions</h3>
-                    <p>${error.message}</p>
+                    <div class="stream-status connecting">
+                        <div class="status-icon">🔄</div>
+                        <div class="status-text">
+                            <div class="main-text">Connecting to suggestion stream...</div>
+                            <div class="sub-text">Establishing real-time connection</div>
+                        </div>
                 </div>
             `;
-            this.showToast('Failed to generate suggestions', 'error');
-        } finally {
-            content.classList.remove('loading');
+                break;
+                
+            case 'monitoring':
+                content.innerHTML = `
+                    <div class="stream-status monitoring">
+                        <div class="status-icon">👁️</div>
+                        <div class="status-text">
+                            <div class="main-text">Monitoring for intelligent suggestions</div>
+                            <div class="sub-text">Real-time intelligent suggestions powered by behavioral insights</div>
+                        </div>
+                        <div class="monitoring-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Trigger:</span>
+                                <span class="detail-value">High-confidence insights (≥8)</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Rate Limit:</span>
+                                <span class="detail-value">Max 1 batch per minute</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                break;
+                
+            case 'rate_limited':
+                const waitTime = Math.ceil(data?.wait_time_seconds || 60);
+                content.innerHTML = `
+                    <div class="stream-status rate-limited">
+                        <div class="status-icon">⏰</div>
+                        <div class="status-text">
+                            <div class="main-text">Rate limited</div>
+                            <div class="sub-text">Next suggestion batch available in ${waitTime} seconds</div>
+                        </div>
+                    </div>
+                `;
+                break;
+                
+            case 'reconnecting':
+                content.innerHTML = `
+                    <div class="stream-status reconnecting">
+                        <div class="status-icon">🔄</div>
+                        <div class="status-text">
+                            <div class="main-text">Reconnecting...</div>
+                            <div class="sub-text">Attempt ${data.attempt}/${data.maxAttempts}</div>
+                        </div>
+                    </div>
+                `;
+                break;
+                
+            case 'error':
+            case 'disconnected':
+                content.innerHTML = `
+                    <div class="error-state">
+                        <div class="error-icon">⚠️</div>
+                        <h3>Stream ${status === 'error' ? 'Error' : 'Disconnected'}</h3>
+                        <p>${data?.message || 'Unable to connect to suggestion stream'}</p>
+                        <button class="retry-btn" onclick="window.zavionApp.initializeSuggestionStream()">🔄 Reconnect</button>
+                    </div>
+                `;
+                break;
         }
+    }
+    
+    displaySuggestionBatch(batch) {
+        const content = document.getElementById('suggestionsContent');
+        if (!content || !batch.suggestions || batch.suggestions.length === 0) return;
+        
+        content.innerHTML = `
+            <div class="suggestions-header">
+                <div class="suggestions-summary">
+                    <h3>🎯 New Intelligent Suggestions</h3>
+                    <div class="meta-info">
+                        Triggered by proposition ${batch.trigger_proposition_id} • Generated ${this.formatTimestamp(batch.generated_at)}
+                        <div class="processing-time">⚡ ${batch.processing_time_seconds.toFixed(2)}s processing time</div>
+                    </div>
+                </div>
+            </div>
+            <div class="suggestions-list">
+                ${batch.suggestions.map((suggestion, index) => `
+                    <div class="suggestion-card gumbo-suggestion" data-suggestion-index="${index}">
+                        <div class="suggestion-header">
+                            <h4 class="suggestion-title">${this.escapeHtml(suggestion.title)}</h4>
+                            <div class="suggestion-meta">
+                                <span class="utility-badge" data-utility="${suggestion.expected_utility}">
+                                    ${suggestion.expected_utility ? suggestion.expected_utility.toFixed(2) : 'N/A'} utility
+                                </span>
+                                <span class="category-badge" data-category="${suggestion.category}">
+                                    ${this.escapeHtml(suggestion.category)}
+                                </span>
+                                <span class="probability-badge">
+                                    ${(suggestion.probability_useful * 100).toFixed(0)}% useful
+                                </span>
+                            </div>
+                        </div>
+                        <div class="suggestion-description">
+                            ${this.escapeHtml(suggestion.description)}
+                        </div>
+                        <div class="suggestion-reasoning">
+                            <details>
+                                <summary>🧠 AI Reasoning</summary>
+                                <div class="reasoning-content">
+                                    ${this.escapeHtml(suggestion.rationale)}
+                                </div>
+                            </details>
+                        </div>
+                        ${suggestion.utility_scores ? `
+                            <div class="utility-scores">
+                                <details>
+                                    <summary>📊 Utility Analysis</summary>
+                                    <div class="scores-grid">
+                                        <div class="score-item">
+                                            <span class="score-label">Benefit:</span>
+                                            <span class="score-value">${suggestion.utility_scores.benefit}/10</span>
+                                        </div>
+                                        <div class="score-item">
+                                            <span class="score-label">False Positive Cost:</span>
+                                            <span class="score-value">${suggestion.utility_scores.false_positive_cost}/10</span>
+                                        </div>
+                                        <div class="score-item">
+                                            <span class="score-label">False Negative Cost:</span>
+                                            <span class="score-value">${suggestion.utility_scores.false_negative_cost}/10</span>
+                                        </div>
+                                        <div class="score-item">
+                                            <span class="score-label">Decay:</span>
+                                            <span class="score-value">${suggestion.utility_scores.decay}/10</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                        ` : ''}
+                        <div class="suggestion-actions">
+                            <button class="action-btn" onclick="window.zavionApp.copySuggestion(${index})">
+                                📋 Copy
+                            </button>
+                            <button class="action-btn" onclick="window.zavionApp.chatAboutSuggestion(${index})">
+                                💬 Discuss
+                            </button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        this.currentSuggestions = batch.suggestions;
+        this.showToast('New suggestions received!', 'success');
+    }
+
+    // Helper methods for suggestion actions
+    copySuggestion(index) {
+        if (!this.currentSuggestions || !this.currentSuggestions[index]) return;
+        
+        const suggestion = this.currentSuggestions[index];
+        const text = `${suggestion.title}\n\n${suggestion.description}\n\nRationale: ${suggestion.rationale}`;
+        
+        navigator.clipboard.writeText(text).then(() => {
+            this.showToast('Suggestion copied to clipboard!', 'success');
+        }).catch(err => {
+            console.error('Failed to copy suggestion:', err);
+            this.showToast('Failed to copy suggestion', 'error');
+        });
+    }
+
+    chatAboutSuggestion(index) {
+        if (!this.currentSuggestions || !this.currentSuggestions[index]) return;
+        
+        const suggestion = this.currentSuggestions[index];
+        // For now, just switch to chat tab and show a message
+        // In a full implementation, you'd pre-populate the chat with the suggestion
+        this.switchTab('chat');
+        this.showToast(`Ready to discuss: ${suggestion.title}`, 'info');
     }
 
     displaySuggestions(suggestionsData) {

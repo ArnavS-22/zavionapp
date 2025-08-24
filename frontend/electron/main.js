@@ -70,7 +70,7 @@ function startBackend() {
 
     function spawnBackendProcess() {
       // Spawn Python process
-      pythonProcess = spawn(pythonPath, [backendPath], {
+      pythonProcess = spawn(pythonPath, [backendPath, '--port', '8000'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false,
         shell: true

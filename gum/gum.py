@@ -530,8 +530,20 @@ class gum:
         session.add_all(drafts)
         await session.flush()
 
+        # Gumbo trigger: Check for high-confidence propositions
         for draft in drafts:
             pool[draft.id] = draft
+            
+            # Trigger Gumbo if confidence >= 8
+            if draft.confidence and draft.confidence >= 8:
+                try:
+                    # Import here to avoid circular imports
+                    from .services.gumbo_engine import trigger_gumbo_suggestions
+                    # Fire and forget - don't block proposition creation
+                    asyncio.create_task(trigger_gumbo_suggestions(draft.id, session))
+                    self.logger.info(f"🎯 Gumbo triggered for high-confidence proposition {draft.id} (confidence: {draft.confidence})")
+                except Exception as e:
+                    self.logger.error(f"Failed to trigger Gumbo for proposition {draft.id}: {e}")
 
         return list(pool.values())
 
