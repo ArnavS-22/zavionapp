@@ -34,6 +34,11 @@ class ZavionApp {
         // Text shimmer management
         this.textShimmerInstances = new Map();
         
+        // Suggestion chat system
+        this.activeSuggestionChats = {};
+        this.currentChatId = null;
+        this.currentSuggestionBatch = null;
+        
         this.init();
     }
 
@@ -1376,6 +1381,11 @@ class ZavionApp {
      * Switch to a specific tab
      */
     switchTab(tabName) {
+        // Clean up previous tab
+        if (this.activeTab === 'suggestions') {
+            this.stopSuggestionPolling();
+        }
+        
         // Hide all tab panels
         const tabPanels = document.querySelectorAll('.tab-panel');
         tabPanels.forEach(panel => {
@@ -1736,8 +1746,9 @@ class ZavionApp {
         // SSE-based suggestion system - no manual generation needed
         // The system automatically generates suggestions when high-confidence insights are detected
         
-        // Set up cleanup for SSE connections on page unload
+        // Set up cleanup for polling on page unload
         window.addEventListener('beforeunload', () => {
+            this.stopSuggestionPolling();
             if (this.suggestionEventSource) {
                 this.suggestionEventSource.close();
                 console.log('SSE connection closed on page unload');
@@ -2145,7 +2156,7 @@ class ZavionApp {
     }
 
     // =============================================================================
-    // GUMBO REAL-TIME SUGGESTION SYSTEM (SSE)
+    // GUMBO RELIABLE SUGGESTION SYSTEM (HTTP POLLING)
     // =============================================================================
         
     initializeSuggestionStream() {
@@ -2153,7 +2164,61 @@ class ZavionApp {
         if (!content) return;
         
         this.updateSuggestionUI('connecting');
-        this.connectSuggestionStream();
+        // Replace SSE with HTTP polling
+        this.startSuggestionPolling();
+    }
+
+    startSuggestionPolling() {
+        console.log('🔄 Starting suggestion HTTP polling');
+        this.updateSuggestionUI('monitoring');
+        
+        // Poll for new suggestions every 5 seconds
+        this.suggestionPollingInterval = setInterval(() => {
+            if (this.activeTab === 'suggestions') {
+                this.checkForNewSuggestions();
+            }
+        }, 5000);
+        
+        // Check immediately
+        this.checkForNewSuggestions();
+    }
+
+    async checkForNewSuggestions() {
+        try {
+            // Get undelivered suggestions (like how propositions work)
+            const response = await fetch(`${this.apiBaseUrl}/suggestions?delivered=false&limit=10`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.suggestions && data.suggestions.length > 0) {
+                console.log(`🎯 Received ${data.suggestions.length} new suggestions via HTTP polling`);
+                
+                // Convert to the format expected by displaySuggestionBatch
+                const batch = {
+                    suggestions: data.suggestions,
+                    generated_at: new Date().toISOString(),
+                    batch_id: data.suggestions[0]?.batch_id || 'polling'
+                };
+                
+                this.displaySuggestionBatch(batch);
+            }
+            
+        } catch (error) {
+            console.error('Error checking for new suggestions:', error);
+            // Don't show error UI for polling failures - just log them
+        }
+    }
+
+    stopSuggestionPolling() {
+        if (this.suggestionPollingInterval) {
+            clearInterval(this.suggestionPollingInterval);
+            this.suggestionPollingInterval = null;
+            console.log('⏹️ Stopped suggestion polling');
+        }
     }
 
     connectSuggestionStream() {
@@ -2346,6 +2411,9 @@ class ZavionApp {
         const content = document.getElementById('suggestionsContent');
         if (!content || !batch.suggestions || batch.suggestions.length === 0) return;
         
+        // Store current batch for chat functionality
+        this.currentSuggestionBatch = batch;
+        
         content.innerHTML = `
             <div class="suggestions-header">
                 <div class="suggestions-summary">
@@ -2443,13 +2511,58 @@ class ZavionApp {
     }
 
     chatAboutSuggestion(index) {
-        if (!this.currentSuggestions || !this.currentSuggestions[index]) return;
+        if (!this.currentSuggestionBatch || !this.currentSuggestionBatch.suggestions || !this.currentSuggestionBatch.suggestions[index]) return;
         
-        const suggestion = this.currentSuggestions[index];
-        // For now, just switch to chat tab and show a message
-        // In a full implementation, you'd pre-populate the chat with the suggestion
+        const suggestion = this.currentSuggestionBatch.suggestions[index];
+        
+        // Create unique chat ID for this suggestion
+        const chatId = `suggestion_${this.currentSuggestionBatch.batch_id}_${index}`;
+        
+        // Create or get existing chat thread
+        this.createSuggestionChat(chatId, suggestion, this.currentSuggestionBatch);
+        
+        // Switch to chat interface
         this.switchTab('chat');
-        this.showToast(`Ready to discuss: ${suggestion.title}`, 'info');
+        this.showToast(`Starting discussion about: ${suggestion.title}`, 'info');
+    }
+
+    createSuggestionChat(chatId, suggestion, batch) {
+        // Check if chat already exists
+        if (this.activeSuggestionChats[chatId]) {
+            this.switchToChat(chatId);
+            return;
+        }
+
+        // Create new chat thread
+        const chatThread = {
+            id: chatId,
+            suggestion: suggestion,
+            batch: batch,
+            messages: [
+                {
+                    role: 'assistant',
+                    content: `I'd be happy to discuss this suggestion with you:\n\n**${suggestion.title}**\n\n${suggestion.description}\n\nWhat would you like to know more about?`,
+                    timestamp: new Date().toISOString()
+                }
+            ],
+            created_at: new Date().toISOString(),
+            last_activity: new Date().toISOString()
+        };
+
+        // Store chat thread
+        this.activeSuggestionChats[chatId] = chatThread;
+        
+        // Update chat sidebar
+        this.updateChatSidebar();
+        
+        // Switch to this chat
+        this.switchToChat(chatId);
+    }
+
+    switchToChat(chatId) {
+        this.currentChatId = chatId;
+        this.loadChatMessages(chatId);
+        this.updateChatUI();
     }
 
     displaySuggestions(suggestionsData) {

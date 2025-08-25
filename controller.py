@@ -119,8 +119,7 @@ gum_instance: Optional[gum] = None
 # Global unified AI client
 ai_client: Optional[UnifiedAIClient] = None
 
-# Gumbo suggestion system globals
-active_sse_connections: set = set()
+# Gumbo suggestion system globals (SSE removed - now using HTTP polling)
 suggestion_metrics = {
     "total_suggestions": 0,
     "total_batches": 0,
@@ -301,6 +300,13 @@ async def ensure_gum_instance(user_name: Optional[str] = None) -> gum:
         )
         
         await gum_instance.connect_db()
+        
+        # Ensure all database tables exist (including suggestions table)
+        from gum.models import init_db
+        logger.info(f"🔍 Creating database tables at: {gum_instance.db_path}")
+        await init_db(gum_instance.db_path)
+        logger.info("🔍 Database tables created successfully")
+        
         logger.info("GUM instance connected to database")
         logger.info("GUM configured with unified AI client for hybrid text/vision processing")
     
@@ -1738,6 +1744,38 @@ async def generate_suggestions(
                 processing_time = (time.time() - start_time) * 1000
                 logger.info(f"Successfully generated {len(suggestions)} suggestions in {processing_time:.2f}ms")
                 
+                # Save suggestions directly to database (copying propositions pattern)
+                try:
+                    # Get database session
+                    gum_inst = await ensure_gum_instance(user_name)
+                    async with gum_inst._session() as session:
+                        from gum.models import Suggestion
+                        
+                        # Save each suggestion directly to database
+                        suggestions_saved = 0
+                        for suggestion_data in suggestions_raw:
+                            suggestion = Suggestion(
+                                title=suggestion_data.get("title", "Untitled")[:200],
+                                description=suggestion_data.get("description", "")[:1000],
+                                category=suggestion_data.get("category", "general")[:100],
+                                rationale=suggestion_data.get("evidence", "")[:500],
+                                expected_utility=suggestion_data.get("confidence", 5) / 10.0,
+                                probability_useful=0.7,
+                                trigger_proposition_id=None,
+                                batch_id=f"manual_generate_{int(time.time())}",
+                                delivered=False
+                            )
+                            session.add(suggestion)
+                            suggestions_saved += 1
+                        
+                        await session.commit()
+                        logger.info(f"💾 SAVED {suggestions_saved} SUGGESTIONS DIRECTLY TO DATABASE")
+                        
+                except Exception as save_error:
+                    logger.error(f"❌ FAILED TO SAVE SUGGESTIONS TO DATABASE: {save_error}")
+                    import traceback
+                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                
                 return SuggestionsResponse(
                     suggestions=suggestions,
                     data_points=len(propositions),  # Using behavioral insights count
@@ -2992,128 +3030,7 @@ async def get_observations_by_hour(
 # GUMBO INTELLIGENT SUGGESTION ENDPOINTS
 # =============================================================================
 
-@app.get("/suggestions/stream")
-async def stream_suggestions_endpoint(
-    request: Request,
-    user_name: Optional[str] = None,
-    include_heartbeat: bool = True,
-    heartbeat_interval: int = 30
-):
-    """
-    Stream real-time intelligent suggestions via Server-Sent Events.
-    
-    This endpoint provides a persistent SSE connection that delivers:
-    - Real-time suggestion batches when generated
-    - Heartbeat events to maintain connection
-    - Rate limit notifications
-    - Error notifications with recovery guidance
-    
-    Args:
-        user_name: Optional user identifier
-        include_heartbeat: Whether to send periodic heartbeat events
-        heartbeat_interval: Heartbeat interval in seconds (default: 30)
-    """
-    if not GUMBO_AVAILABLE or not EventSourceResponse:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Gumbo suggestion streaming not available - missing dependencies"
-        )
-    
-    async def event_generator() -> AsyncIterator[dict]:
-        """Generate SSE events for the client."""
-        connection_id = str(uuid.uuid4())
-        logger.info(f"SSE connection established: {connection_id}")
-        
-        try:
-            # Register this connection
-            active_sse_connections.add(connection_id)
-            
-            # Send initial connection event
-            yield {
-                "event": SSEEventType.SUGGESTIONS_AVAILABLE,
-                "data": json.dumps({
-                    "status": "connected",
-                    "connection_id": connection_id,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "message": "Real-time suggestion stream active"
-                })
-            }
-            
-            # Keep connection alive and handle events
-            last_heartbeat = time.time()
-            
-            while True:
-                try:
-                    # Check if client disconnected
-                    if await request.is_disconnected():
-                        logger.info(f"SSE client disconnected: {connection_id}")
-                        break
-                    
-                    # Send heartbeat if enabled and interval passed
-                    if include_heartbeat and (time.time() - last_heartbeat) >= heartbeat_interval:
-                        yield {
-                            "event": SSEEventType.HEARTBEAT,
-                            "data": json.dumps({
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "connections_active": len(active_sse_connections),
-                                "uptime_seconds": time.time() - last_heartbeat
-                            })
-                        }
-                        last_heartbeat = time.time()
-                    
-                    # Check rate limit status and notify if limited
-                    if GUMBO_AVAILABLE:
-                        try:
-                            engine = await get_gumbo_engine()
-                            rate_status = engine.rate_limiter.get_status()
-                            
-                            if rate_status["is_rate_limited"]:
-                                yield {
-                                    "event": SSEEventType.RATE_LIMITED,
-                                    "data": json.dumps({
-                                        "wait_time_seconds": rate_status["wait_time_seconds"],
-                                        "next_available_at": rate_status["next_refill_at"].isoformat() if rate_status["next_refill_at"] else None,
-                                        "message": f"Suggestion generation rate limited. Next batch available in {rate_status['wait_time_seconds']:.0f} seconds."
-                                    })
-                                }
-                        except Exception as e:
-                            logger.warning(f"Failed to check rate limit status: {e}")
-                    
-                    # Wait a bit before next iteration
-                    await asyncio.sleep(1.0)
-                    
-                except asyncio.CancelledError:
-                    logger.info(f"SSE connection cancelled: {connection_id}")
-                    break
-                except Exception as e:
-                    logger.error(f"Error in SSE event generator: {e}")
-                    yield {
-                        "event": SSEEventType.ERROR,
-                        "data": json.dumps({
-                            "error_type": "stream_error",
-                            "message": f"Stream error: {str(e)}",
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "retry_after_seconds": 5.0
-                        })
-                    }
-                    await asyncio.sleep(5.0)  # Wait before retrying
-                    
-        except Exception as e:
-            logger.error(f"Fatal SSE error for {connection_id}: {e}")
-            yield {
-                "event": SSEEventType.ERROR,
-                "data": json.dumps({
-                    "error_type": "fatal_error",
-                    "message": f"Connection error: {str(e)}",
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                })
-            }
-        finally:
-            # Cleanup connection
-            active_sse_connections.discard(connection_id)
-            logger.info(f"SSE connection cleaned up: {connection_id}")
-    
-    return EventSourceResponse(event_generator())
+# SSE endpoint removed - suggestions now use reliable HTTP polling
 
 
 @app.get("/suggestions/health", response_model=SuggestionHealthResponse)
@@ -3157,10 +3074,8 @@ async def get_suggestions_health():
             wait_time_seconds=health_data["rate_limit_status"]["wait_time_seconds"]
         )
         
-        # Determine overall status
+        # Determine overall status (SSE connections removed - using HTTP polling)
         status_value = health_data["status"]
-        if len(active_sse_connections) == 0 and health_data["metrics"]["total_batches"] > 0:
-            status_value = "degraded"  # No active connections but system working
         
         return SuggestionHealthResponse(
             status=status_value,
@@ -3177,45 +3092,84 @@ async def get_suggestions_health():
         )
 
 
-async def broadcast_suggestion_batch(batch_data: dict):
-    """
-    Broadcast suggestion batch to all active SSE connections.
-    
-    This function is called by the Gumbo engine when new suggestions
-    are generated and need to be delivered to connected clients.
-    """
-    if not active_sse_connections:
-        logger.debug("No active SSE connections for suggestion broadcast")
-        return
-    
-    # Update global metrics
-    suggestion_metrics["total_suggestions"] += len(batch_data.get("suggestions", []))
-    suggestion_metrics["total_batches"] += 1
-    suggestion_metrics["total_processing_time"] += batch_data.get("processing_time_seconds", 0.0)
-    
-    # Create SSE event
-    event_data = {
-        "event": SSEEventType.SUGGESTION_BATCH,
-        "data": json.dumps(batch_data, default=str)
-    }
-    
-    # Broadcast to all connections
-    failed_connections = []
-    for connection_id in list(active_sse_connections):
-        try:
-            # Note: In a real implementation, you'd need to store actual connection objects
-            # For now, we'll rely on the engine's internal SSE handling
-            logger.debug(f"Broadcasting suggestion batch to connection: {connection_id}")
-        except Exception as e:
-            logger.warning(f"Failed to broadcast to connection {connection_id}: {e}")
-            failed_connections.append(connection_id)
-    
-    # Remove failed connections
-    for connection_id in failed_connections:
-        active_sse_connections.discard(connection_id)
-    
-    logger.info(f"Broadcasted suggestion batch to {len(active_sse_connections)} connections")
+# REMOVED: broadcast_suggestion_batch function - replaced with direct database save in suggestion generation
 
+
+@app.get("/suggestions")
+async def list_suggestions(
+    user_name: Optional[str] = None,
+    limit: Optional[int] = 20,
+    delivered: Optional[bool] = None
+):
+    """List recent suggestions with filtering options (copying propositions pattern exactly)."""
+    try:
+        logger.info(f"Listing suggestions: limit={limit}, delivered={delivered}")
+        
+        # Get GUM instance (same pattern as propositions)
+        gum_inst = await ensure_gum_instance(user_name)
+        
+        # Query recent suggestions from database (same pattern as propositions)
+        async with gum_inst._session() as session:
+            from gum.models import Suggestion
+            from sqlalchemy import select, desc
+            
+            stmt = select(Suggestion)
+            
+            # Apply delivered filter if specified
+            if delivered is not None:
+                stmt = stmt.where(Suggestion.delivered == delivered)
+            
+            # Order by creation time (newest first) - same as propositions
+            stmt = stmt.order_by(desc(Suggestion.created_at))
+            
+            # Apply limit - same as propositions
+            stmt = stmt.limit(limit)
+            
+            result = await session.execute(stmt)
+            suggestions = result.scalars().all()
+            
+            # Mark undelivered suggestions as delivered (same logic as propositions)
+            if delivered is False or delivered is None:
+                undelivered_ids = [s.id for s in suggestions if not s.delivered]
+                if undelivered_ids:
+                    from sqlalchemy import update
+                    await session.execute(
+                        update(Suggestion)
+                        .where(Suggestion.id.in_(undelivered_ids))
+                        .values(delivered=True)
+                    )
+                    await session.commit()
+                    logger.info(f"Marked {len(undelivered_ids)} suggestions as delivered")
+            
+            # Convert to response format (same pattern as propositions)
+            response = []
+            for suggestion in suggestions:
+                response.append({
+                    "id": suggestion.id,
+                    "title": suggestion.title,
+                    "description": suggestion.description,
+                    "category": suggestion.category,
+                    "rationale": suggestion.rationale,
+                    "expected_utility": suggestion.expected_utility,
+                    "probability_useful": suggestion.probability_useful,
+                    "trigger_proposition_id": suggestion.trigger_proposition_id,
+                    "batch_id": suggestion.batch_id,
+                    "delivered": suggestion.delivered,
+                    "created_at": serialize_datetime(parse_datetime(suggestion.created_at))
+                })
+            
+            logger.info(f"Retrieved {len(response)} suggestions")
+            return response
+            
+    except Exception as e:
+        logger.error(f"Error listing suggestions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listing suggestions: {str(e)}"
+        )
+
+
+# REMOVED: HTTP broadcast endpoint - not needed with direct database save
 
 @app.post("/suggestions/test-trigger")
 async def test_trigger_gumbo():
@@ -3232,9 +3186,9 @@ async def test_trigger_gumbo():
     try:
         # Get the most recent proposition to use as trigger
         gum_inst = await ensure_gum_instance()
-        async with gum_inst.session as session:
+        async with gum_inst._session() as session:
             from sqlalchemy import select, desc
-            from models import Proposition
+            from gum.models import Proposition
             
             stmt = select(Proposition).order_by(desc(Proposition.created_at)).limit(1)
             result = await session.execute(stmt)

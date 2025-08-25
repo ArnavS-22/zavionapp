@@ -227,25 +227,25 @@
                 <div class="suggestions-main">
                     <div class="suggestions-header">
                         <h1>Suggestions</h1>
-                        <div class="suggestions-controls">
-                            <select id="suggestionsHours" class="suggestions-select">
-                                <option value="2">Last 2 hours</option>
-                                <option value="6" selected>Last 6 hours</option>
-                                <option value="12">Last 12 hours</option>
-                                <option value="24">Last 24 hours</option>
-                            </select>
-                            <button class="btn-generate" id="generateSuggestions">
-                                <i class="fas fa-magic"></i>
-                                Generate Suggestions
-                            </button>
+                        <div class="suggestions-status">
+                            <div class="status-indicator">
+                                <div class="status-dot" id="suggestionStatusDot"></div>
+                                <span id="suggestionStatusText">Monitoring for intelligent suggestions</span>
+                            </div>
+                            <div class="suggestion-info">
+                                <p>Real-time intelligent suggestions powered by behavioral insights</p>
+                                <div class="trigger-info">
+                                    <small>Trigger: High-confidence insights (≥8) • Rate Limit: Max 1 batch per minute</small>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
                     <div class="suggestions-content" id="suggestionsContent">
-                        <div class="empty-state">
-                            <i class="fas fa-lightbulb"></i>
-                            <h3>No suggestions generated</h3>
-                            <p>Click "Generate Suggestions" to get proactive insights based on your recent activity</p>
+                        <div class="empty-state" id="emptyState">
+                            <i class="fas fa-brain"></i>
+                            <h3>Waiting for intelligent insights</h3>
+                            <p>Suggestions will appear automatically when high-confidence behavioral patterns are detected</p>
                         </div>
                     </div>
                 </div>

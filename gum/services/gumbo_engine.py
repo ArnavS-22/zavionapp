@@ -300,7 +300,11 @@ class GumboEngine:
             self._update_metrics(batch)
             
             # Step 7: Real-time delivery via SSE
+            logger.error(f"🚨🚨🚨 ABOUT TO BROADCAST BATCH: {len(batch.suggestions)} suggestions")
+            print(f"🚨🚨🚨 ABOUT TO BROADCAST BATCH: {len(batch.suggestions)} suggestions")
             await self._broadcast_suggestion_batch(batch)
+            logger.error(f"🚨🚨🚨 BROADCAST CALL COMPLETED")
+            print(f"🚨🚨🚨 BROADCAST CALL COMPLETED")
             
             logger.info(f"✅ Gumbo completed for proposition {proposition_id} in {processing_time:.2f}s")
             return batch
@@ -623,32 +627,52 @@ class GumboEngine:
     
     async def _broadcast_suggestion_batch(self, batch: SuggestionBatch):
         """Broadcast suggestion batch to all connected SSE clients."""
+        logger.info(f"🚨 _broadcast_suggestion_batch called with {len(batch.suggestions)} suggestions")
         event = SSEEvent(
             event=SSEEventType.SUGGESTION_BATCH,
             data=batch.dict()
         )
+        logger.info(f"🚨 Created SSE event, calling _broadcast_sse_event")
         await self._broadcast_sse_event(event)
+        logger.info(f"🚨 _broadcast_sse_event completed")
     
     async def _broadcast_sse_event(self, event: SSEEvent):
-        """Broadcast SSE event to all connected clients."""
-        if not self._active_sse_connections:
-            return
+        """Save suggestions directly to database (replaced HTTP broadcast)."""
+        logger.info(f"🚨 GUMBO SAVING SUGGESTIONS DIRECTLY TO DATABASE: {len(event.data.get('suggestions', []))} suggestions")
         
-        # Convert to SSE format
-        sse_data = event.to_sse_format()
-        
-        # Send to all connections (with error handling)
-        failed_connections = []
-        for connection in list(self._active_sse_connections):
-            try:
-                await connection.send(sse_data)
-            except Exception as e:
-                logger.warning(f"Failed to send SSE event to connection: {e}")
-                failed_connections.append(connection)
-        
-        # Remove failed connections
-        for connection in failed_connections:
-            await self._close_sse_connection(connection)
+        try:
+            # Save suggestions directly to database (same pattern as controller)
+            from gum.gum import gum
+            gum_inst = gum()
+            await gum_inst.connect_db()
+            
+            async with gum_inst._session() as session:
+                from gum.models import Suggestion
+                
+                # Save each suggestion directly to database
+                suggestions_saved = 0
+                for suggestion_data in event.data.get("suggestions", []):
+                    suggestion = Suggestion(
+                        title=suggestion_data.get("title", "Untitled")[:200],
+                        description=suggestion_data.get("description", "")[:1000],
+                        category=suggestion_data.get("category", "general")[:100],
+                        rationale=suggestion_data.get("rationale", "")[:500],  # AI generates 'rationale', not 'evidence'
+                        expected_utility=suggestion_data.get("priority", 5) / 10.0,  # AI generates 'priority', not 'confidence'
+                        probability_useful=0.7,
+                        trigger_proposition_id=event.data.get("trigger_proposition_id"),
+                        batch_id=f"gumbo_{int(time.time())}",
+                        delivered=False
+                    )
+                    session.add(suggestion)
+                    suggestions_saved += 1
+                
+                await session.commit()
+                logger.info(f"💾 GUMBO SAVED {suggestions_saved} SUGGESTIONS DIRECTLY TO DATABASE")
+                
+        except Exception as e:
+            logger.error(f"❌ GUMBO FAILED TO SAVE SUGGESTIONS: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
     
     async def register_sse_connection(self, connection):
         """Register a new SSE connection."""
