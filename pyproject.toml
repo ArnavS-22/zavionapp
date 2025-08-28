@@ -26,7 +26,7 @@ dependencies = [
     "uvicorn",
     "python-multipart",
     "aiohttp",
-    "python-dateutil",
+    "python-dateutil",gi
     "numpy",
     "setuptools>=42",
     "wheel",

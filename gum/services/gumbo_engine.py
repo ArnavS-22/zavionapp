@@ -296,11 +296,18 @@ class GumboEngine:
                 batch_id=batch_id
             )
             
-            # Update metrics
+            # Step 7: Save to database
+            suggestion_ids = await self._save_suggestions_to_database(batch, session)
+            
+            # Step 8: Update metrics
             self._update_metrics(batch)
             
-            # Step 7: Real-time delivery via SSE
+            # Step 9: Real-time delivery via SSE
             await self._broadcast_suggestion_batch(batch)
+            
+            # Step 10: Mark as delivered
+            if suggestion_ids:
+                await self._mark_suggestions_delivered(suggestion_ids, session)
             
             logger.info(f"✅ Gumbo completed for proposition {proposition_id} in {processing_time:.2f}s")
             return batch
@@ -621,44 +628,108 @@ class GumboEngine:
         self._suggestion_metrics["total_processing_time"] += batch.processing_time_seconds
         self._suggestion_metrics["last_batch_at"] = batch.generated_at
     
+    async def _save_suggestions_to_database(
+        self, 
+        batch: SuggestionBatch, 
+        session: AsyncSession
+    ) -> List[int]:
+        """Save suggestion batch to database and return suggestion IDs."""
+        try:
+            from ..models import Suggestion
+            
+            suggestion_ids = []
+            
+            for suggestion_data in batch.suggestions:
+                # Create database record
+                db_suggestion = Suggestion(
+                    title=suggestion_data.title,
+                    description=suggestion_data.description,
+                    category=suggestion_data.category,
+                    rationale=suggestion_data.rationale,
+                    expected_utility=suggestion_data.expected_utility or 0.0,
+                    probability_useful=suggestion_data.probability_useful or 0.0,
+                    trigger_proposition_id=batch.trigger_proposition_id,
+                    batch_id=batch.batch_id,
+                    delivered=False  # Will be marked True when delivered via SSE
+                )
+                
+                session.add(db_suggestion)
+                await session.flush()  # Get the ID
+                suggestion_ids.append(db_suggestion.id)
+            
+            await session.commit()
+            
+            logger.info(f"Saved {len(suggestion_ids)} suggestions to database")
+            return suggestion_ids
+            
+        except Exception as e:
+            logger.error(f"Failed to save suggestions to database: {e}")
+            await session.rollback()
+            return []
+
+    async def _mark_suggestions_delivered(
+        self, 
+        suggestion_ids: List[int], 
+        session: AsyncSession
+    ):
+        """Mark suggestions as delivered in database."""
+        try:
+            from ..models import Suggestion
+            from sqlalchemy import update
+            
+            stmt = (
+                update(Suggestion)
+                .where(Suggestion.id.in_(suggestion_ids))
+                .values(delivered=True)
+            )
+            
+            await session.execute(stmt)
+            await session.commit()
+            
+            logger.info(f"Marked {len(suggestion_ids)} suggestions as delivered")
+            
+        except Exception as e:
+            logger.error(f"Failed to mark suggestions as delivered: {e}")
+            await session.rollback()
+
     async def _broadcast_suggestion_batch(self, batch: SuggestionBatch):
-        """Broadcast suggestion batch to all connected SSE clients."""
-        event = SSEEvent(
-            event=SSEEventType.SUGGESTION_BATCH,
-            data=batch.dict()
-        )
-        await self._broadcast_sse_event(event)
-    
+        """Broadcast suggestion batch via global SSE manager."""
+        try:
+            from .sse_manager import get_sse_manager
+            sse_manager = get_sse_manager()
+            
+            await sse_manager.broadcast_event("suggestion_batch", {
+                "suggestions": [s.dict() for s in batch.suggestions],
+                "trigger_proposition_id": batch.trigger_proposition_id,
+                "generated_at": batch.generated_at.isoformat(),
+                "processing_time_seconds": batch.processing_time_seconds,
+                "batch_id": batch.batch_id
+            })
+            
+            logger.info(f"Broadcasted suggestion batch {batch.batch_id} via global SSE manager")
+            
+        except Exception as e:
+            logger.error(f"Failed to broadcast suggestion batch via SSE: {e}")
+
     async def _broadcast_sse_event(self, event: SSEEvent):
-        """Broadcast SSE event to all connected clients."""
-        if not self._active_sse_connections:
-            return
-        
-        # Convert to SSE format
-        sse_data = event.to_sse_format()
-        
-        # Send to all connections (with error handling)
-        failed_connections = []
-        for connection in list(self._active_sse_connections):
-            try:
-                await connection.send(sse_data)
-            except Exception as e:
-                logger.warning(f"Failed to send SSE event to connection: {e}")
-                failed_connections.append(connection)
-        
-        # Remove failed connections
-        for connection in failed_connections:
-            await self._close_sse_connection(connection)
-    
+        """Broadcast SSE event via global SSE manager."""
+        try:
+            from .sse_manager import get_sse_manager
+            sse_manager = get_sse_manager()
+            
+            await sse_manager.broadcast_event(event.event.value, event.data)
+            
+        except Exception as e:
+            logger.error(f"Failed to broadcast SSE event via global manager: {e}")
+
+    # Legacy methods - kept for compatibility but no longer used
     async def register_sse_connection(self, connection):
-        """Register a new SSE connection."""
-        self._active_sse_connections.add(connection)
-        logger.info(f"SSE connection registered, total: {len(self._active_sse_connections)}")
+        """Legacy method - no longer used with global SSE manager."""
+        logger.warning("register_sse_connection called but not used with global SSE manager")
     
     async def _close_sse_connection(self, connection):
-        """Close and remove an SSE connection."""
-        self._active_sse_connections.discard(connection)
-        logger.info(f"SSE connection closed, remaining: {len(self._active_sse_connections)}")
+        """Legacy method - no longer used with global SSE manager."""
+        logger.warning("_close_sse_connection called but not used with global SSE manager")
     
     def get_health_status(self) -> Dict[str, Any]:
         """Get current engine health status."""

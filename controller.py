@@ -3022,15 +3022,19 @@ async def stream_suggestions_endpoint(
     async def event_generator() -> AsyncIterator[dict]:
         """Generate SSE events for the client."""
         connection_id = str(uuid.uuid4())
+        event_queue = asyncio.Queue()
+        
         logger.info(f"SSE connection established: {connection_id}")
         
         try:
-            # Register this connection
-            active_sse_connections.add(connection_id)
+            # Register with global SSE manager
+            from gum.services.sse_manager import get_sse_manager
+            sse_manager = get_sse_manager()
+            await sse_manager.register_connection(connection_id, event_queue)
             
             # Send initial connection event
             yield {
-                "event": SSEEventType.SUGGESTIONS_AVAILABLE,
+                "event": "connected",
                 "data": json.dumps({
                     "status": "connected",
                     "connection_id": connection_id,
@@ -3039,7 +3043,7 @@ async def stream_suggestions_endpoint(
                 })
             }
             
-            # Keep connection alive and handle events
+            # Handle events from global SSE manager
             last_heartbeat = time.time()
             
             while True:
@@ -3049,38 +3053,21 @@ async def stream_suggestions_endpoint(
                         logger.info(f"SSE client disconnected: {connection_id}")
                         break
                     
-                    # Send heartbeat if enabled and interval passed
-                    if include_heartbeat and (time.time() - last_heartbeat) >= heartbeat_interval:
-                        yield {
-                            "event": SSEEventType.HEARTBEAT,
-                            "data": json.dumps({
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "connections_active": len(active_sse_connections),
-                                "uptime_seconds": time.time() - last_heartbeat
-                            })
-                        }
-                        last_heartbeat = time.time()
-                    
-                    # Check rate limit status and notify if limited
-                    if GUMBO_AVAILABLE:
-                        try:
-                            engine = await get_gumbo_engine()
-                            rate_status = engine.rate_limiter.get_status()
-                            
-                            if rate_status["is_rate_limited"]:
-                                yield {
-                                    "event": SSEEventType.RATE_LIMITED,
-                                    "data": json.dumps({
-                                        "wait_time_seconds": rate_status["wait_time_seconds"],
-                                        "next_available_at": rate_status["next_refill_at"].isoformat() if rate_status["next_refill_at"] else None,
-                                        "message": f"Suggestion generation rate limited. Next batch available in {rate_status['wait_time_seconds']:.0f} seconds."
-                                    })
-                                }
-                        except Exception as e:
-                            logger.warning(f"Failed to check rate limit status: {e}")
-                    
-                    # Wait a bit before next iteration
-                    await asyncio.sleep(1.0)
+                    # Wait for events with timeout for heartbeat
+                    try:
+                        event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                        yield event
+                    except asyncio.TimeoutError:
+                        # Send heartbeat if needed
+                        if include_heartbeat and (time.time() - last_heartbeat) >= heartbeat_interval:
+                            yield {
+                                "event": "heartbeat",
+                                "data": json.dumps({
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "connections_active": sse_manager.get_connection_count()
+                                })
+                            }
+                            last_heartbeat = time.time()
                     
                 except asyncio.CancelledError:
                     logger.info(f"SSE connection cancelled: {connection_id}")
@@ -3088,20 +3075,18 @@ async def stream_suggestions_endpoint(
                 except Exception as e:
                     logger.error(f"Error in SSE event generator: {e}")
                     yield {
-                        "event": SSEEventType.ERROR,
+                        "event": "error",
                         "data": json.dumps({
                             "error_type": "stream_error",
                             "message": f"Stream error: {str(e)}",
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "retry_after_seconds": 5.0
+                            "timestamp": datetime.now(timezone.utc).isoformat()
                         })
                     }
-                    await asyncio.sleep(5.0)  # Wait before retrying
                     
         except Exception as e:
             logger.error(f"Fatal SSE error for {connection_id}: {e}")
             yield {
-                "event": SSEEventType.ERROR,
+                "event": "error",
                 "data": json.dumps({
                     "error_type": "fatal_error",
                     "message": f"Connection error: {str(e)}",
@@ -3110,7 +3095,7 @@ async def stream_suggestions_endpoint(
             }
         finally:
             # Cleanup connection
-            active_sse_connections.discard(connection_id)
+            await sse_manager.unregister_connection(connection_id)
             logger.info(f"SSE connection cleaned up: {connection_id}")
     
     return EventSourceResponse(event_generator())
@@ -3159,7 +3144,16 @@ async def get_suggestions_health():
         
         # Determine overall status
         status_value = health_data["status"]
-        if len(active_sse_connections) == 0 and health_data["metrics"]["total_batches"] > 0:
+        
+        # Get connection count from global SSE manager
+        try:
+            from gum.services.sse_manager import get_sse_manager
+            sse_manager = get_sse_manager()
+            active_connections = sse_manager.get_connection_count()
+        except Exception:
+            active_connections = 0
+        
+        if active_connections == 0 and health_data["metrics"]["total_batches"] > 0:
             status_value = "degraded"  # No active connections but system working
         
         return SuggestionHealthResponse(
@@ -3177,44 +3171,63 @@ async def get_suggestions_health():
         )
 
 
+@app.get("/suggestions/history", response_model=List[dict])
+async def get_suggestion_history(
+    user_name: Optional[str] = None,
+    limit: Optional[int] = 50,
+    offset: Optional[int] = 0,
+    delivered_only: Optional[bool] = None
+):
+    """Get historical suggestions from database."""
+    
+    try:
+        gum_inst = await ensure_gum_instance(user_name)
+        
+        async with gum_inst._session() as session:
+            from gum.models import Suggestion
+            from sqlalchemy import select, desc
+            
+            stmt = select(Suggestion).order_by(desc(Suggestion.created_at))
+            
+            if delivered_only is not None:
+                stmt = stmt.where(Suggestion.delivered == delivered_only)
+            
+            stmt = stmt.limit(limit).offset(offset)
+            
+            result = await session.execute(stmt)
+            suggestions = result.scalars().all()
+            
+            return [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "description": s.description,
+                    "category": s.category,
+                    "rationale": s.rationale,
+                    "expected_utility": s.expected_utility,
+                    "probability_useful": s.probability_useful,
+                    "trigger_proposition_id": s.trigger_proposition_id,
+                    "batch_id": s.batch_id,
+                    "delivered": s.delivered,
+                    "created_at": s.created_at.isoformat() if hasattr(s.created_at, 'isoformat') else str(s.created_at)
+                }
+                for s in suggestions
+            ]
+            
+    except Exception as e:
+        logger.error(f"Error getting suggestion history: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting suggestion history: {str(e)}"
+        )
+
+
 async def broadcast_suggestion_batch(batch_data: dict):
     """
-    Broadcast suggestion batch to all active SSE connections.
-    
-    This function is called by the Gumbo engine when new suggestions
-    are generated and need to be delivered to connected clients.
+    Legacy function - no longer used with global SSE manager.
+    Kept for compatibility but suggestions are now broadcast via SSE manager.
     """
-    if not active_sse_connections:
-        logger.debug("No active SSE connections for suggestion broadcast")
-        return
-    
-    # Update global metrics
-    suggestion_metrics["total_suggestions"] += len(batch_data.get("suggestions", []))
-    suggestion_metrics["total_batches"] += 1
-    suggestion_metrics["total_processing_time"] += batch_data.get("processing_time_seconds", 0.0)
-    
-    # Create SSE event
-    event_data = {
-        "event": SSEEventType.SUGGESTION_BATCH,
-        "data": json.dumps(batch_data, default=str)
-    }
-    
-    # Broadcast to all connections
-    failed_connections = []
-    for connection_id in list(active_sse_connections):
-        try:
-            # Note: In a real implementation, you'd need to store actual connection objects
-            # For now, we'll rely on the engine's internal SSE handling
-            logger.debug(f"Broadcasting suggestion batch to connection: {connection_id}")
-        except Exception as e:
-            logger.warning(f"Failed to broadcast to connection {connection_id}: {e}")
-            failed_connections.append(connection_id)
-    
-    # Remove failed connections
-    for connection_id in failed_connections:
-        active_sse_connections.discard(connection_id)
-    
-    logger.info(f"Broadcasted suggestion batch to {len(active_sse_connections)} connections")
+    logger.warning("broadcast_suggestion_batch called but not used with global SSE manager")
 
 
 @app.post("/suggestions/test-trigger")
