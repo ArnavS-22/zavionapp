@@ -158,3 +158,4 @@ class ContextRetrievalResult(BaseModel):
     total_found: int
     retrieval_time_seconds: float
     semantic_query: str
+    screen_content: Optional[str] = Field(None, description="Current screen content for enhanced context")

@@ -1733,14 +1733,14 @@ class ZavionApp {
     }
 
     setupSuggestionsListeners() {
-        // SSE-based suggestion system - no manual generation needed
-        // The system automatically generates suggestions when high-confidence insights are detected
+        // Production-grade polling system - automatically fetches suggestions
+        // The system intelligently polls for new suggestions based on user activity
         
-        // Set up cleanup for SSE connections on page unload
+        // Set up cleanup for polling on page unload
         window.addEventListener('beforeunload', () => {
-            if (this.suggestionEventSource) {
-                this.suggestionEventSource.close();
-                console.log('SSE connection closed on page unload');
+            if (this.suggestionPolling) {
+                this.cleanupSuggestionPolling();
+                console.log('Suggestion polling cleaned up on page unload');
             }
         });
     }
@@ -2148,121 +2148,225 @@ class ZavionApp {
     // GUMBO REAL-TIME SUGGESTION SYSTEM (SSE)
     // =============================================================================
         
+    // Production-grade suggestion polling system
     initializeSuggestionStream() {
         const content = document.getElementById('suggestionsContent');
         if (!content) return;
         
         this.updateSuggestionUI('connecting');
-        this.connectSuggestionStream();
+        this.initializeSuggestionPolling();
     }
 
-    connectSuggestionStream() {
-        const content = document.getElementById('suggestionsContent');
-        if (!content) return;
+    initializeSuggestionPolling() {
+        // Initialize polling system
+        this.suggestionPolling = {
+            isActive: false,
+            interval: null,
+            lastFetch: null,
+            retryCount: 0,
+            maxRetries: 3,
+            baseDelay: 30000, // 30 seconds
+            maxDelay: 300000, // 5 minutes
+            lastModified: null,
+            suggestionsCache: new Map(),
+            isUserActive: true,
+            errorCount: 0,
+            maxErrors: 5
+        };
 
+        // Start polling
+        this.startSuggestionPolling();
+        
+        // Set up user activity detection
+        this.setupUserActivityDetection();
+        
+        // Initial fetch
+        this.fetchSuggestions();
+    }
+
+    startSuggestionPolling() {
+        if (this.suggestionPolling.isActive) return;
+        
+        this.suggestionPolling.isActive = true;
+        this.suggestionPolling.interval = setInterval(() => {
+            this.fetchSuggestions();
+        }, this.suggestionPolling.baseDelay);
+        
+        console.log('✅ Suggestion polling started');
+        this.updateSuggestionUI('monitoring');
+    }
+
+    stopSuggestionPolling() {
+        if (this.suggestionPolling.interval) {
+            clearInterval(this.suggestionPolling.interval);
+            this.suggestionPolling.interval = null;
+        }
+        this.suggestionPolling.isActive = false;
+        console.log('⏹️ Suggestion polling stopped');
+    }
+
+    async fetchSuggestions() {
         try {
-            // Close existing connection if any
-            if (this.suggestionEventSource) {
-                this.suggestionEventSource.close();
+            // Check if user is active to adjust polling frequency
+            if (!this.suggestionPolling.isUserActive) {
+                console.log('👤 User inactive, skipping suggestion fetch');
+                return;
             }
 
-            // Create new SSE connection
-            this.suggestionEventSource = new EventSource(`${this.apiBaseUrl}/suggestions/stream`);
+            // Prepare headers for conditional requests
+            const headers = {};
+            if (this.suggestionPolling.lastModified) {
+                headers['If-Modified-Since'] = this.suggestionPolling.lastModified;
+            }
+
+            const response = await fetch(`${this.apiBaseUrl}/suggestions/history`, {
+                method: 'GET',
+                headers: headers,
+                signal: AbortSignal.timeout(10000) // 10 second timeout
+            });
+
+            if (response.status === 304) {
+                console.log('✅ No new suggestions (304 Not Modified)');
+                this.suggestionPolling.errorCount = 0; // Reset error count on success
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            // Update last modified header
+            const lastModified = response.headers.get('Last-Modified');
+            if (lastModified) {
+                this.suggestionPolling.lastModified = lastModified;
+            }
+
+            const suggestions = await response.json();
+            console.log(`🎯 Fetched ${suggestions.length} suggestions`);
             
-            // Connection opened
-            this.suggestionEventSource.onopen = () => {
-                console.log('✅ Suggestion stream connected');
-                this.updateSuggestionUI('monitoring');
-                this.suggestionReconnectAttempts = 0;
-            };
-
-            // Handle suggestion batch events
-            this.suggestionEventSource.addEventListener('suggestion_batch', (event) => {
-                try {
-                    const batch = JSON.parse(event.data);
-                    console.log('🎯 Received suggestion batch:', batch);
-                    this.displaySuggestionBatch(batch);
-                } catch (error) {
-                    console.error('Error parsing suggestion batch:', error);
-                }
-            });
-
-            // Handle heartbeat events
-            this.suggestionEventSource.addEventListener('heartbeat', (event) => {
-                try {
-                    const heartbeat = JSON.parse(event.data);
-                    console.log('💓 Suggestion stream heartbeat:', heartbeat);
-                    // Update connection status if needed
-                } catch (error) {
-                    console.error('Error parsing heartbeat:', error);
-                }
-            });
-
-            // Handle rate limit events
-            this.suggestionEventSource.addEventListener('rate_limited', (event) => {
-                try {
-                    const rateLimitData = JSON.parse(event.data);
-                    console.log('⏰ Suggestion generation rate limited:', rateLimitData);
-                    this.updateSuggestionUI('rate_limited', rateLimitData);
-                } catch (error) {
-                    console.error('Error parsing rate limit event:', error);
-                }
-            });
-
-            // Handle error events
-            this.suggestionEventSource.addEventListener('error', (event) => {
-                try {
-                    const errorData = JSON.parse(event.data);
-                    console.error('❌ Suggestion stream error:', errorData);
-                    this.updateSuggestionUI('error', errorData);
-                } catch (error) {
-                    console.error('Error parsing error event:', error);
-                }
-            });
-
-            // Connection error
-            this.suggestionEventSource.onerror = (event) => {
-                console.error('❌ Suggestion stream connection error:', event);
-                
-                if (this.suggestionEventSource.readyState === EventSource.CLOSED) {
-                    this.handleSuggestionStreamReconnect();
-                }
-            };
+            // Process and display suggestions
+            this.processSuggestions(suggestions);
             
+            // Reset error tracking on success
+            this.suggestionPolling.errorCount = 0;
+            this.suggestionPolling.retryCount = 0;
+            this.suggestionPolling.lastFetch = Date.now();
+            
+            // Adaptive polling: reduce frequency if no new suggestions
+            if (suggestions.length === 0) {
+                this.adjustPollingFrequency('reduce');
+            } else {
+                this.adjustPollingFrequency('normal');
+            }
+
         } catch (error) {
-            console.error('Failed to create suggestion stream:', error);
-            this.updateSuggestionUI('error', { message: error.message });
+            console.error('❌ Error fetching suggestions:', error);
+            this.handleSuggestionFetchError(error);
         }
     }
 
-    handleSuggestionStreamReconnect() {
-        const maxAttempts = 5;
-        const baseDelay = 1000; // 1 second
-
-        if (!this.suggestionReconnectAttempts) {
-            this.suggestionReconnectAttempts = 0;
-        }
-
-        if (this.suggestionReconnectAttempts >= maxAttempts) {
-            console.error('Max reconnection attempts reached for suggestion stream');
-            this.updateSuggestionUI('disconnected');
+    processSuggestions(suggestions) {
+        // Check if suggestions have actually changed
+        const suggestionsHash = this.hashSuggestions(suggestions);
+        if (this.suggestionPolling.suggestionsCache.get('hash') === suggestionsHash) {
+            console.log('🔄 Suggestions unchanged, skipping re-render');
             return;
         }
 
-        this.suggestionReconnectAttempts++;
-        const delay = baseDelay * Math.pow(2, this.suggestionReconnectAttempts - 1); // Exponential backoff
+        // Update cache
+        this.suggestionPolling.suggestionsCache.set('hash', suggestionsHash);
+        this.suggestionPolling.suggestionsCache.set('data', suggestions);
+        this.suggestionPolling.suggestionsCache.set('timestamp', Date.now());
 
-        console.log(`🔄 Reconnecting suggestion stream in ${delay}ms (attempt ${this.suggestionReconnectAttempts}/${maxAttempts})`);
+        // Display suggestions
+        this.displaySuggestions({ suggestions: suggestions });
+    }
+
+    hashSuggestions(suggestions) {
+        // Simple hash for change detection
+        return JSON.stringify(suggestions.map(s => ({ id: s.id, updated_at: s.updated_at || s.created_at })));
+    }
+
+    handleSuggestionFetchError(error) {
+        this.suggestionPolling.errorCount++;
         
-        this.updateSuggestionUI('reconnecting', {
-            attempt: this.suggestionReconnectAttempts,
-            maxAttempts: maxAttempts
+        if (this.suggestionPolling.errorCount >= this.suggestionPolling.maxErrors) {
+            console.error('🚨 Max suggestion fetch errors reached, stopping polling');
+            this.updateSuggestionUI('error', { message: 'Too many errors, polling stopped' });
+            this.stopSuggestionPolling();
+            return;
+        }
+
+        // Exponential backoff for retries
+        const backoffDelay = Math.min(
+            this.suggestionPolling.baseDelay * Math.pow(2, this.suggestionPolling.retryCount),
+            this.suggestionPolling.maxDelay
+        );
+
+        console.log(`⏳ Retrying suggestion fetch in ${backoffDelay}ms (attempt ${this.suggestionPolling.retryCount + 1})`);
+        
+        setTimeout(() => {
+            this.fetchSuggestions();
+        }, backoffDelay);
+
+        this.suggestionPolling.retryCount++;
+        
+        // Show user-friendly error message
+        this.updateSuggestionUI('error', { 
+            message: `Connection issue: ${error.message}. Retrying...` 
+        });
+    }
+
+    adjustPollingFrequency(action) {
+        if (action === 'reduce' && this.suggestionPolling.isActive) {
+            // Reduce frequency for inactive periods
+            const newInterval = Math.min(this.suggestionPolling.baseDelay * 2, this.suggestionPolling.maxDelay);
+            if (this.suggestionPolling.interval) {
+                clearInterval(this.suggestionPolling.interval);
+                this.suggestionPolling.interval = setInterval(() => {
+                    this.fetchSuggestions();
+                }, newInterval);
+            }
+            console.log(`🐌 Reduced polling frequency to ${newInterval}ms`);
+        } else if (action === 'normal' && this.suggestionPolling.isActive) {
+            // Restore normal frequency
+            if (this.suggestionPolling.interval) {
+                clearInterval(this.suggestionPolling.interval);
+                this.suggestionPolling.interval = setInterval(() => {
+                    this.fetchSuggestions();
+                }, this.suggestionPolling.baseDelay);
+            }
+            console.log(`🚀 Restored normal polling frequency (${this.suggestionPolling.baseDelay}ms)`);
+        }
+    }
+
+    setupUserActivityDetection() {
+        let activityTimeout;
+        const resetActivity = () => {
+            this.suggestionPolling.isUserActive = true;
+            clearTimeout(activityTimeout);
+            activityTimeout = setTimeout(() => {
+                this.suggestionPolling.isUserActive = false;
+                console.log('👤 User marked as inactive, reducing polling frequency');
+            }, 300000); // 5 minutes of inactivity
+        };
+
+        // Reset activity on user interactions
+        ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(event => {
+            document.addEventListener(event, resetActivity, { passive: true });
         });
 
-        setTimeout(() => {
-            this.connectSuggestionStream();
-        }, delay);
+        // Initial activity
+        resetActivity();
     }
+
+    // Cleanup method for component unmounting
+    cleanupSuggestionPolling() {
+        this.stopSuggestionPolling();
+        this.suggestionPolling = null;
+    }
+
+    // Removed old SSE reconnection method - replaced with robust polling
 
     updateSuggestionUI(status, data = null) {
         const content = document.getElementById('suggestionsContent');
@@ -2270,15 +2374,15 @@ class ZavionApp {
 
         switch (status) {
             case 'connecting':
-            content.innerHTML = `
+                content.innerHTML = `
                     <div class="stream-status connecting">
                         <div class="status-icon">🔄</div>
                         <div class="status-text">
-                            <div class="main-text">Connecting to suggestion stream...</div>
-                            <div class="sub-text">Establishing real-time connection</div>
+                            <div class="main-text">Initializing suggestion system...</div>
+                            <div class="sub-text">Setting up intelligent polling</div>
                         </div>
-                </div>
-            `;
+                    </div>
+                `;
                 break;
                 
             case 'monitoring':
@@ -2287,45 +2391,35 @@ class ZavionApp {
                         <div class="status-icon">👁️</div>
                         <div class="status-text">
                             <div class="main-text">Monitoring for intelligent suggestions</div>
-                            <div class="sub-text">Real-time intelligent suggestions powered by behavioral insights</div>
+                            <div class="sub-text">Smart polling system active - checking every 30 seconds</div>
                         </div>
                         <div class="monitoring-details">
                             <div class="detail-item">
-                                <span class="detail-label">Trigger:</span>
-                                <span class="detail-value">High-confidence insights (≥8)</span>
+                                <span class="detail-label">Polling:</span>
+                                <span class="detail-value">Active (${this.suggestionPolling?.baseDelay / 1000}s)</span>
                             </div>
                             <div class="detail-item">
-                                <span class="detail-label">Rate Limit:</span>
-                                <span class="detail-value">Max 1 batch per minute</span>
+                                <span class="detail-label">Last Check:</span>
+                                <span class="detail-value">${this.suggestionPolling?.lastFetch ? new Date(this.suggestionPolling.lastFetch).toLocaleTimeString() : 'Never'}</span>
                             </div>
                         </div>
                     </div>
                 `;
                 break;
                 
-            case 'rate_limited':
-                const waitTime = Math.ceil(data?.wait_time_seconds || 60);
+            case 'error':
                 content.innerHTML = `
-                    <div class="stream-status rate-limited">
-                        <div class="status-icon">⏰</div>
+                    <div class="stream-status error">
+                        <div class="status-icon">❌</div>
                         <div class="status-text">
-                            <div class="main-text">Rate limited</div>
-                            <div class="sub-text">Next suggestion batch available in ${waitTime} seconds</div>
+                            <div class="main-text">Connection Error</div>
+                            <div class="sub-text">${data?.message || 'Failed to fetch suggestions'}</div>
                         </div>
+                        <button class="retry-btn" onclick="window.zavionApp.fetchSuggestions()">🔄 Retry</button>
+                        <button class="retry-btn" onclick="window.zavionApp.initializeSuggestionPolling()">🔄 Restart Polling</button>
                     </div>
                 `;
                 break;
-                
-            case 'reconnecting':
-                content.innerHTML = `
-                    <div class="stream-status reconnecting">
-                        <div class="status-icon">🔄</div>
-                        <div class="status-text">
-                            <div class="main-text">Reconnecting...</div>
-                            <div class="sub-text">Attempt ${data.attempt}/${data.maxAttempts}</div>
-                        </div>
-                    </div>
-                `;
                 break;
                 
             case 'error':
@@ -3257,3 +3351,4 @@ const additionalCSS = `
 const style = document.createElement('style');
 style.textContent = additionalCSS;
 document.head.appendChild(style);
+

@@ -65,6 +65,9 @@ The user just demonstrated: "{trigger_text}"
 RELATED BEHAVIORAL PATTERNS:
 {related_context}
 
+CURRENT SCREEN CONTEXT:
+{current_screen_context}
+
 ADVANCED ANALYSIS FRAMEWORK:
 Analyze the behavioral data to identify:
 
@@ -398,15 +401,35 @@ class GumboEngine:
             # Limit to top 10 for context management
             related_propositions = related_propositions[:10]
             
+            # NEW: Get current screen content for enhanced context
+            screen_content_start = time.time()
+            current_screen_content = None
+            
+            try:
+                current_screen_content = await self._get_current_screen_content(session)
+                screen_content_time = time.time() - screen_content_start
+                
+                if current_screen_content:
+                    logger.info(f"📱 Screen content retrieved in {screen_content_time:.3f}s ({len(current_screen_content)} chars)")
+                else:
+                    logger.info(f"📱 No screen content available (retrieved in {screen_content_time:.3f}s)")
+                    
+            except Exception as e:
+                screen_content_time = time.time() - screen_content_start
+                logger.warning(f"📱 Screen content retrieval failed after {screen_content_time:.3f}s: {e}")
+                # Continue without screen content - this won't break suggestions
+                current_screen_content = None
+            
             retrieval_time = time.time() - start_time
             
-            logger.info(f"📋 Retrieved {len(related_propositions)} related propositions in {retrieval_time:.2f}s")
+            logger.info(f"📋 Enhanced context: {len(related_propositions)} propositions + screen content in {retrieval_time:.2f}s")
             
             return ContextRetrievalResult(
                 related_propositions=related_propositions,
                 total_found=len(search_results),
                 retrieval_time_seconds=retrieval_time,
-                semantic_query=semantic_query
+                semantic_query=semantic_query,
+                screen_content=current_screen_content  # NEW: Include screen content
             )
             
         except Exception as e:
@@ -441,7 +464,8 @@ class GumboEngine:
             # Generate suggestion candidates
             generation_prompt = MULTI_CANDIDATE_GENERATION_PROMPT.format(
                 trigger_text=trigger_prop.text,
-                related_context=related_context
+                related_context=related_context,
+                current_screen_context=context_result.screen_content if context_result.screen_content else "No current screen context available."
             )
             
             # Call LLM for suggestion generation
@@ -765,6 +789,121 @@ class GumboEngine:
             },
             "rate_limit_status": self.rate_limiter.get_status() if self.rate_limiter else None
         }
+
+    async def _get_current_screen_content(
+        self, 
+        session: AsyncSession, 
+        minutes_back: int = 5,
+        max_content_length: int = 1000
+    ) -> Optional[str]:
+        """
+        Get current screen content from recent observations for enhanced suggestions.
+        
+        This method safely retrieves recent screen observations and transcription data
+        to provide context about what the user is currently working on.
+        
+        Args:
+            session: Database session for querying observations
+            minutes_back: How far back to look for recent observations (default: 5 minutes)
+            max_content_length: Maximum content length to return (prevents prompt bloat)
+            
+        Returns:
+            Formatted screen content string, or None if unavailable
+            
+        Raises:
+            None - All errors are handled gracefully with fallbacks
+        """
+        start_time = time.time()
+        
+        try:
+            # Calculate cutoff time for recent observations
+            cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=minutes_back)
+            
+            # Query for recent observations with proper indexing and limits
+            stmt = (
+                select(Observation)
+                .where(
+                    Observation.created_at >= cutoff_time,
+                    Observation.content_type == "input_text"  # Only text observations
+                )
+                .order_by(Observation.created_at.desc())
+                .limit(3)  # Limit to prevent performance issues
+            )
+            
+            result = await session.execute(stmt)
+            recent_observations = result.scalars().all()
+            
+            if not recent_observations:
+                logger.info("📱 No recent screen observations found for context")
+                return None
+            
+            # Build context string from recent observations
+            context_parts = []
+            total_length = 0
+            
+            for obs in recent_observations:
+                # Extract key information from observation content
+                content = obs.content.strip()
+                if not content:
+                    continue
+                
+                # Format timestamp for context
+                time_str = obs.created_at.strftime("%I:%M %p")
+                
+                # Extract app name and key content if available
+                app_info = ""
+                key_content = ""
+                
+                # Parse structured content (if available)
+                if "Application Name:" in content:
+                    lines = content.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if "Application Name:" in line:
+                            app_info = line
+                        elif any(indicator in line for indicator in ["Visible Text:", "Text Content:", "Browsing:", "Window Viewing:"]):
+                            key_content = line
+                            break
+                    
+                    # Format the context part
+                    if app_info and key_content:
+                        context_part = f"[{time_str}] {app_info} | {key_content}"
+                    elif app_info:
+                        context_part = f"[{time_str}] {app_info}"
+                    else:
+                        context_part = f"[{time_str}] {content[:100]}..."
+                else:
+                    # Fallback for unstructured content
+                    context_part = f"[{time_str}] {content[:150]}..."
+                
+                # Check if adding this would exceed our length limit
+                if total_length + len(context_part) > max_content_length:
+                    context_parts.append(f"[{time_str}] {content[:100]}... (truncated)")
+                    break
+                
+                context_parts.append(context_part)
+                total_length += len(context_part)
+            
+            # Combine into readable context
+            if not context_parts:
+                logger.warning("📱 No valid context parts extracted from observations")
+                return None
+            
+            screen_context = "\n".join(context_parts)
+            processing_time = time.time() - start_time
+            
+            logger.info(f"📱 Retrieved {len(recent_observations)} recent observations for screen context in {processing_time:.3f}s")
+            logger.debug(f"📱 Screen context length: {len(screen_context)} chars")
+            
+            return screen_context
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            logger.error(f"📱 Failed to retrieve screen content after {processing_time:.3f}s: {e}")
+            
+            # Return None on failure - this won't break the suggestion system
+            # The existing flow will continue without screen context
+            return None
 
 
 # Global engine instance (singleton pattern)

@@ -27,8 +27,8 @@ const getPythonPath = () => {
     // In packaged app, use bundled Python
     return path.join(process.resourcesPath, 'python', 'python.exe');
   } else {
-    // In development, use system Python
-    return 'python';
+    // In development, use virtual environment Python
+    return path.join(__dirname, '..', '..', 'venv', 'bin', 'python3');
   }
 };
 
@@ -156,7 +156,7 @@ async function startCliTracking() {
     const cliWorkingDir = path.join(__dirname, '..', '..'); // Go up to gum root directory
     
     // Spawn CLI process with correct working directory
-    cliProcess = spawn(`python -m gum.cli --user-name "Arnav Sharma" --model gpt-4o-mini`, {
+    cliProcess = spawn(`${getPythonPath()} -m gum.cli --user-name "Arnav Sharma" --model gpt-4o-mini`, {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
       shell: true,
